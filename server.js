@@ -399,12 +399,13 @@ io.on('connection',socket=>{
   // ── Facilitador cria a sala ──────────────────────────────────────────────
   socket.on('create_room',()=>{
     const id=genId();
-    rooms.set(id,{
+    const room={
       id,
       players:{blue:null,red:null,facilitator:socket.id},
       state:null,
       customOB:JSON.parse(JSON.stringify(ORDER_OF_BATTLE)),
-    });
+    };
+    rooms.set(id,room);
     socket.data.roomId=id; socket.data.role='facilitator';
     socket.join(id);
     socket.emit('room_created',{roomId:id,role:'facilitator',ob:room.customOB});
