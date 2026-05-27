@@ -683,6 +683,22 @@ input::placeholder { color: #2a4a60; text-transform: none; letter-spacing: 1px; 
 }
 .fac-hint { font-size: 0.75rem; color: var(--dim); line-height: 1.5; }
 
+/* ─── Config start panel: room code box ──────────────────────────────────── */
+.fac-room-code-box {
+  text-align: center;
+  border: 1px dashed rgba(201,168,76,0.45);
+  padding: 8px 6px;
+  margin-bottom: 6px;
+}
+#fac-room-code-big {
+  font-size: 1.9rem; letter-spacing: 10px;
+  color: var(--gold-l); font-weight: bold;
+}
+
+/* ─── Config start panel: player rows ────────────────────────────────────── */
+.fac-players-counter { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+.fac-player-row { font-size: 0.75rem; letter-spacing: 0.5px; padding: 3px 0; transition: color 0.3s; white-space: pre; }
+
 /* ─── OB Tabs ────────────────────────────────────────────────────────────── */
 .fac-tabs { display: flex; gap: 4px; margin-bottom: 8px; flex-shrink: 0; }
 .fac-tab {

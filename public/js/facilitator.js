@@ -15,7 +15,9 @@ let facMsgReplyOpen = null;   // messageId da resposta em aberto no painel
 function facInit(roomId, ob) {
   facRoomId = roomId;
   facOB     = ob ? JSON.parse(JSON.stringify(ob)) : null;
-  document.getElementById('fac-room-code').textContent = roomId;
+  document.getElementById('fac-room-code').textContent      = roomId;
+  const big = document.getElementById('fac-room-code-big');
+  if (big) big.textContent = roomId;
   facRenderConfig();
 }
 
@@ -385,14 +387,42 @@ function escHtml(str) {
 function facUpdatePlayerStatus(data) {
   blueConnected = data.blueReady;
   redConnected  = data.redReady;
-  const el = document.getElementById('fac-player-status');
-  if (!el) return;
-  el.innerHTML =
-    `<span class="${blueConnected ? 'fac-blue' : 'fac-dim'}">● Azul</span> ` +
-    `<span class="${redConnected  ? 'fac-red'  : 'fac-dim'}">● Vermelho</span>`;
 
-  const btn = document.getElementById('fac-start-btn');
-  if (btn) btn.disabled = !(blueConnected && redConnected);
+  // Header mini-indicator
+  const el = document.getElementById('fac-player-status');
+  if (el) {
+    el.innerHTML =
+      `<span class="${blueConnected ? 'fac-blue' : 'fac-dim'}">● Azul</span> ` +
+      `<span class="${redConnected  ? 'fac-red'  : 'fac-dim'}">● Vermelho</span>`;
+  }
+
+  // Start panel rows
+  const blueRow = document.getElementById('fac-status-blue-row');
+  const redRow  = document.getElementById('fac-status-red-row');
+  if (blueRow) {
+    blueRow.textContent = blueConnected ? '⬤ Equipe Azul       conectada' : '⬤ Equipe Azul       aguardando';
+    blueRow.className   = `fac-player-row ${blueConnected ? 'fac-blue' : 'fac-dim'}`;
+  }
+  if (redRow) {
+    redRow.textContent = redConnected ? '⬤ Equipe Vermelha   conectada' : '⬤ Equipe Vermelha   aguardando';
+    redRow.className   = `fac-player-row ${redConnected ? 'fac-red' : 'fac-dim'}`;
+  }
+
+  // Start button + notice
+  const btn    = document.getElementById('fac-start-btn');
+  const notice = document.getElementById('fac-config-notice');
+  const ready  = blueConnected && redConnected;
+  if (btn) btn.disabled = !ready;
+  if (notice) {
+    if (ready) {
+      notice.textContent  = '✔ Ambas as equipes estão prontas.';
+      notice.style.color  = 'var(--green)';
+    } else {
+      const missing = [!blueConnected && 'Azul', !redConnected && 'Vermelho'].filter(Boolean).join(' e ');
+      notice.textContent  = `Aguardando: ${missing}...`;
+      notice.style.color  = '';
+    }
+  }
 }
 
 // Mostra/oculta painéis conforme a fase
