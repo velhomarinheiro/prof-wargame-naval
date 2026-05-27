@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Operação Atlântico Sul — Teatro de Operações</title>
+  <link rel="stylesheet" href="css/game.css">
+</head>
+<body>
+
+<!-- ── GAME SCREEN ──────────────────────────────────────────────────────── -->
+<div id="game-screen">
+
+  <!-- Header bar -->
+  <header class="game-header">
+    <div class="header-title">OPERAÇÃO ATLÂNTICO SUL</div>
+    <div id="my-turn-banner" class="my-turn-banner">▶ SUA VEZ</div>
+    <div class="header-meta">
+      <span id="team-badge"   class="team-badge"></span>
+      <span id="turn-label"   class="meta-item">Turno 1</span>
+      <span id="period-label" class="meta-item">☀ Diurno</span>
+      <span id="phase-label"  class="meta-item phase">Movimentação</span>
+    </div>
+  </header>
+
+  <!-- Main area -->
+  <div class="game-body">
+
+    <!-- Canvas -->
+    <div class="canvas-wrap">
+      <canvas id="game-canvas"></canvas>
+      <div id="terrain-tip" class="terrain-tip"></div>
+      <div id="error-flash" class="error-flash hidden"></div>
+      <div id="stack-picker" class="stack-picker hidden">
+        <div class="sp-title">UNIDADES EMPILHADAS</div>
+        <div id="sp-list"></div>
+        <button id="sp-group-btn" class="act-btn blue sp-group">▶ Grupo (juntos)</button>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+
+      <div class="panel fleet-panel">
+        <div class="panel-title">FROTAS</div>
+        <div class="fleet-row blue"><span id="fleet-blue">Azul: 9</span></div>
+        <div class="fleet-row red" ><span id="fleet-red" >Verm: 9</span></div>
+      </div>
+
+      <div class="panel unit-info-panel">
+        <div class="panel-title">UNIDADE SELECIONADA</div>
+        <div id="unit-panel"><p class="no-sel">Clique em uma unidade sua</p></div>
+      </div>
+
+      <div class="panel actions-panel">
+        <div class="panel-title">AÇÕES</div>
+        <button id="end-phase-btn"  class="act-btn yellow hidden">Encerrar Movimentação</button>
+        <button id="combat-btn"     class="act-btn orange hidden">Confirmar Ataques (0)</button>
+        <button id="undo-step-btn"  class="act-btn gray   hidden">↩ Desfazer Passo</button>
+        <button id="cancel-btn"     class="act-btn gray   hidden">Cancelar Seleção</button>
+        <div class="phase-legend">
+          <div class="leg-row"><span class="leg-swatch green"></span>Hexágonos de movimento</div>
+          <div class="leg-row"><span class="leg-swatch red"  ></span>Alvos no alcance</div>
+        </div>
+      </div>
+
+      <!-- Terrain legend -->
+      <div class="panel terrain-panel">
+        <div class="panel-title">TERRENO</div>
+        <div class="terrain-legend">
+          <div class="tleg-row"><span class="tleg-sw" style="background:#c8a15a"></span>Área Terrestre</div>
+          <div class="tleg-row"><span class="tleg-sw" style="background:#3aadcc"></span>Águas Rasas &lt;200m</div>
+          <div class="tleg-row"><span class="tleg-sw" style="background:#1e72a0"></span>Plataforma Continental</div>
+          <div class="tleg-row"><span class="tleg-sw" style="background:#0d3c68"></span>Águas Profundas</div>
+          <div class="tleg-row"><span class="tleg-sw" style="background:#c07820"></span>Bacia Petrolífera ★</div>
+        </div>
+        <div class="infra-legend">
+          <div class="tleg-row"><span class="ileg-ic" style="color:#82b1ff">✛</span>Base Naval</div>
+          <div class="tleg-row"><span class="ileg-ic" style="color:#80cbc4">⚓</span>Porto</div>
+          <div class="tleg-row"><span class="ileg-ic" style="color:#b0bec5">✈</span>Base Aérea</div>
+          <div class="tleg-row"><span class="ileg-ic" style="color:#ffcc02">▲</span>Plataforma PLT</div>
+        </div>
+      </div>
+
+      <div class="panel log-panel">
+        <div class="panel-title">RELATÓRIO DE BATALHA</div>
+        <div id="battle-log" class="battle-log"></div>
+      </div>
+
+    </aside>
+  </div>
+</div>
+
+<!-- ── LOBBY SCREEN ─────────────────────────────────────────────────────── -->
+<div id="lobby-screen">
+  <div class="lobby-box">
+    <h1>⚓ OPERAÇÃO ATLÂNTICO SUL</h1>
+    <p>Wargame Naval · 2 jogadores</p>
+    <div id="lobby-menu">
+      <button id="btn-create" class="act-btn blue">Criar Nova Sala</button>
+      <div class="or-sep">— ou —</div>
+      <div class="join-row">
+        <input id="room-input" type="text" maxlength="6" placeholder="CÓDIGO DA SALA" autocomplete="off">
+        <button id="btn-join" class="act-btn red">Entrar</button>
+      </div>
+      <p id="lobby-err" class="lobby-err hidden"></p>
+    </div>
+    <div id="lobby-waiting" class="hidden">
+      <p>Sala criada! Compartilhe o código:</p>
+      <div id="room-display" class="room-code">——</div>
+      <p class="spinner">Aguardando oponente...</p>
+    </div>
+  </div>
+
+
+</div>
+
+<!-- ── BATTLE ROUND PANEL ─────────────────────────────────────────────────── -->
+<div id="br-panel" class="overlay hidden">
+  <div class="br-box">
+    <div id="br-panel-header" class="br-header">── Engajamento ──</div>
+    <div id="br-panel-body"   class="br-log"></div>
+    <div id="br-decision"     class="br-decision hidden">
+      <div class="br-question">Continuar o combate neste engajamento?</div>
+      <div class="br-btns">
+        <button id="br-btn-continue" class="act-btn green">▶ CONTINUAR</button>
+        <button id="br-btn-stop"     class="act-btn red">■ PARAR</button>
+      </div>
+    </div>
+    <div id="br-waiting" class="br-waiting hidden">⌛ Aguardando decisão do adversário...</div>
+    <div id="br-ok-area" class="br-ok-area hidden">
+      <button id="br-btn-ok" class="act-btn blue">OK — Próximo ▶</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── GAME OVER ─────────────────────────────────────────────────────────── -->
+<div id="game-over" class="overlay hidden">
+  <div class="over-box">
+    <div id="winner-msg" class="victory">VITÓRIA!</div>
+    <div class="over-actions">
+      <button id="btn-restart" class="act-btn blue">Jogar Novamente</button>
+      <button id="btn-back"    class="act-btn gray">Voltar ao Lobby</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── DISCONNECTED ──────────────────────────────────────────────────────── -->
+<div id="disconnected" class="overlay hidden">
+  <div class="over-box">
+    <div class="disconnect-msg">Oponente desconectou.</div>
+    <button onclick="location.href='/'" class="act-btn gray">Voltar ao Lobby</button>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="js/hex.js"></script>
+<script src="js/terrain.js"></script>
+<script src="js/units.js"></script>
+<script src="js/client.js"></script>
+</body>
+</html>
