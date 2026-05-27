@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Operação Atlântico Sul</title>
+  <title>Operação Atlântico Sul — Jogo de Guerra Profissional</title>
   <link rel="stylesheet" href="css/main.css">
 </head>
 <body>
@@ -14,7 +14,8 @@
   <div class="hero-content">
     <div class="classification">SIMULAÇÃO TÁTICA NAVAL</div>
     <h1>OPERAÇÃO<br><span>ATLÂNTICO SUL</span></h1>
-    <p class="tagline">Wargame Naval por Turnos · Multiplayer Online</p>
+    <p class="tagline-pro">JOGO DE GUERRA PROFISSIONAL</p>
+    <p class="tagline">Wargame Naval por Turnos · Facilitador + 2 Equipes</p>
     <a href="#lobby" class="btn-primary scroll-down">▼ INICIAR OPERAÇÃO</a>
   </div>
   <div class="compass-rose">
@@ -160,29 +161,30 @@
   <div class="container">
     <h2>COMO JOGAR</h2>
     <div class="steps">
-      <div class="step"><div class="step-n">1</div>
-        <h3>Crie ou entre em uma sala</h3>
-        <p>Um jogador cria a sala e compartilha o código de 6 letras com o adversário.</p>
+      <div class="step"><div class="step-n step-fac">F</div>
+        <h3>Facilitador cria a sala</h3>
+        <p>O facilitador cria a sala, configura a ordem de batalha e compartilha o
+           código de 6 letras com as duas equipes.</p>
       </div>
-      <div class="step"><div class="step-n">2</div>
-        <h3>Fase de Movimentação</h3>
-        <p>Cada time move suas unidades (clique na unidade → hexágonos verdes = alcance).
-           Encerre quando terminar. A outra força move em seguida.</p>
+      <div class="step"><div class="step-n step-blue">A</div>
+        <h3>Equipes entram na sala</h3>
+        <p>Cada equipe digita o código e escolhe seu papel (Azul ou Vermelho).
+           Quando ambas conectam, o facilitador inicia a partida.</p>
       </div>
       <div class="step"><div class="step-n">3</div>
-        <h3>Fase de Combate</h3>
-        <p>Selecione uma unidade sua e clique em inimigos detectados dentro do alcance
-           (hexágonos vermelhos) para declarar ataques. Confirme quando pronto.</p>
+        <h3>Fase de Movimentação</h3>
+        <p>Cada equipe move suas unidades. Ao fim, o facilitador revisa e aprova
+           os movimentos antes do combate começar.</p>
       </div>
       <div class="step"><div class="step-n">4</div>
-        <h3>Resolução Simultânea</h3>
-        <p>Quando ambos confirmam, os ataques são resolvidos ao mesmo tempo.
-           Unidades destruídas são removidas do tabuleiro.</p>
+        <h3>Fase de Combate</h3>
+        <p>As equipes declaram ataques. A resolução é simultânea. O facilitador
+           revisa e pode ajustar os resultados antes de aplicá-los.</p>
       </div>
       <div class="step"><div class="step-n">5</div>
-        <h3>Vitória</h3>
-        <p>Vence quem destruir todas as unidades inimigas. O jogo alterna períodos
-           diurnos e noturnos a cada turno.</p>
+        <h3>Controle do Facilitador</h3>
+        <p>Durante toda a partida o facilitador pode enviar mensagens às equipes,
+           reposicionar unidades e gerenciar o estado do jogo em tempo real.</p>
       </div>
     </div>
   </div>
@@ -191,61 +193,74 @@
 <!-- ═══ LOBBY ════════════════════════════════════════════════════════════════ -->
 <section class="lobby-section" id="lobby">
   <div class="container">
-    <h2>INICIAR OPERAÇÃO</h2>
+    <h2>ACESSAR O TEATRO DE OPERAÇÕES</h2>
 
-    <div id="lobby-menu" class="lobby-box">
-      <button id="btn-create" class="btn-action blue">
-        <span class="btn-icon">⚓</span>
-        Criar Nova Sala
-        <small>Você joga como Força Azul</small>
+    <div class="lobby-box">
+
+      <!-- Facilitador -->
+      <button id="btn-create-fac" class="btn-action gold">
+        <span class="btn-icon">★</span>
+        Criar Sala
+        <small>Você é o Facilitador · configura e conduz a partida</small>
       </button>
 
-      <div class="lobby-or">— ou —</div>
+      <div class="lobby-or">— ou entre com um código —</div>
 
-      <div class="join-form">
+      <!-- Código da sala -->
+      <div class="join-code-row">
         <input id="room-input" type="text" maxlength="6" placeholder="CÓDIGO DA SALA" autocomplete="off">
-        <button id="btn-join" class="btn-action red">
+      </div>
+
+      <!-- Equipes -->
+      <div class="join-teams-row">
+        <button id="btn-join-blue" class="btn-action blue">
+          <span class="btn-icon">⚓</span>
+          Equipe Azul
+          <small>Força Azul · Marinha do Brasil</small>
+        </button>
+        <button id="btn-join-red" class="btn-action red">
           <span class="btn-icon">⚔</span>
-          Entrar na Sala
-          <small>Você joga como Força Vermelha</small>
+          Equipe Vermelha
+          <small>Força Vermelha · Adversário</small>
         </button>
       </div>
-      <p id="lobby-err" class="lobby-err hidden"></p>
-    </div>
 
-    <div id="lobby-waiting" class="lobby-box waiting hidden">
-      <p>Sala criada com sucesso. Código:</p>
-      <div id="room-display" class="room-code">——</div>
-      <p class="hint">Compartilhe este código com seu oponente</p>
-      <div class="spinner">Aguardando oponente...</div>
+      <p id="lobby-err" class="lobby-err hidden"></p>
     </div>
   </div>
 </section>
 
 <footer>
-  <p>OPERAÇÃO ATLÂNTICO SUL · Wargame Naval © 2026 · <a href="game.html">Entrar no Teatro de Operações</a></p>
+  <p>OPERAÇÃO ATLÂNTICO SUL · Jogo de Guerra Profissional © 2026 · <a href="game.html">Acesso direto ao Teatro</a></p>
 </footer>
 
 <script>
-  const btnCreate = document.getElementById('btn-create');
-  const btnJoin   = document.getElementById('btn-join');
-  const roomInput = document.getElementById('room-input');
-  const lobbyErr  = document.getElementById('lobby-err');
-
-  btnCreate.addEventListener('click', () => {
+  document.getElementById('btn-create-fac').addEventListener('click', () => {
     sessionStorage.setItem('pendingAction', 'create');
     location.href = '/game';
   });
 
-  btnJoin.addEventListener('click', () => {
-    const c = roomInput.value.trim().toUpperCase();
+  document.getElementById('btn-join-blue').addEventListener('click', () => {
+    const c = document.getElementById('room-input').value.trim().toUpperCase();
     if (!c) { showErr('Digite o código da sala.'); return; }
     sessionStorage.setItem('pendingAction', 'join');
-    sessionStorage.setItem('pendingCode', c);
+    sessionStorage.setItem('pendingCode',   c);
+    sessionStorage.setItem('pendingTeam',   'blue');
     location.href = '/game';
   });
 
-  roomInput.addEventListener('keydown', e => { if (e.key === 'Enter') btnJoin.click(); });
+  document.getElementById('btn-join-red').addEventListener('click', () => {
+    const c = document.getElementById('room-input').value.trim().toUpperCase();
+    if (!c) { showErr('Digite o código da sala.'); return; }
+    sessionStorage.setItem('pendingAction', 'join');
+    sessionStorage.setItem('pendingCode',   c);
+    sessionStorage.setItem('pendingTeam',   'red');
+    location.href = '/game';
+  });
+
+  document.getElementById('room-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btn-join-blue').click();
+  });
 
   document.querySelector('.scroll-down').addEventListener('click', e => {
     e.preventDefault();
@@ -253,9 +268,10 @@
   });
 
   function showErr(msg) {
-    lobbyErr.textContent = msg;
-    lobbyErr.classList.remove('hidden');
-    setTimeout(() => lobbyErr.classList.add('hidden'), 4000);
+    const el = document.getElementById('lobby-err');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 4000);
   }
 </script>
 </body>
