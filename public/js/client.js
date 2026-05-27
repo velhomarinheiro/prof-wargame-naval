@@ -2,60 +2,54 @@
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
-const lobbyScreen  = $('lobby-screen');
-const gameScreen   = $('game-screen');
-const canvas       = $('game-canvas');
-const ctx          = canvas.getContext('2d');
-const teamBadge    = $('team-badge');
-const turnLabel    = $('turn-label');
-const periodLabel  = $('period-label');
-const phaseLabel   = $('phase-label');
-const myTurnBanner = $('my-turn-banner');
-const unitPanel    = $('unit-panel');
-const endPhaseBtn  = $('end-phase-btn');
-const combatBtn    = $('combat-btn');
-const undoStepBtn  = $('undo-step-btn');
-const cancelBtn    = $('cancel-btn');
-const fleetBlue    = $('fleet-blue');
-const fleetRed     = $('fleet-red');
-const logEl        = $('battle-log');
-const gameOver     = $('game-over');
-const winnerMsg    = $('winner-msg');
-const disconnected = $('disconnected');
-const lobbyMenu    = $('lobby-menu');
-const lobbyWaiting = $('lobby-waiting');
-const lobbyErr     = $('lobby-err');
-const roomDisplay  = $('room-display');
-const roomInput    = $('room-input');
-const btnCreate    = $('btn-create');
-const btnJoin      = $('btn-join');
-const terrainTip   = $('terrain-tip');
-const stackPicker  = $('stack-picker');
-const spList       = $('sp-list');
-const spGroupBtn   = $('sp-group-btn');
+const lobbyScreen    = $('lobby-screen');
+const configScreen   = $('config-screen');
+const gameScreen     = $('game-screen');
+const canvas         = $('game-canvas');
+const ctx            = canvas.getContext('2d');
+const teamBadge      = $('team-badge');
+const turnLabel      = $('turn-label');
+const periodLabel    = $('period-label');
+const phaseLabel     = $('phase-label');
+const myTurnBanner   = $('my-turn-banner');
+const unitPanel      = $('unit-panel');
+const endPhaseBtn    = $('end-phase-btn');
+const combatBtn      = $('combat-btn');
+const undoStepBtn    = $('undo-step-btn');
+const cancelBtn      = $('cancel-btn');
+const fleetBlue      = $('fleet-blue');
+const fleetRed       = $('fleet-red');
+const logEl          = $('battle-log');
+const gameOver       = $('game-over');
+const winnerMsg      = $('winner-msg');
+const disconnected   = $('disconnected');
+const roomInput      = $('room-input');
+const terrainTip     = $('terrain-tip');
+const stackPicker    = $('stack-picker');
+const spList         = $('sp-list');
+const spGroupBtn     = $('sp-group-btn');
 
 // ─── Canvas setup ─────────────────────────────────────────────────────────────
 canvas.width  = CVS_W;
 canvas.height = CVS_H;
 
-// ─── Map background image ─────────────────────────────────────────────────────
-const mapImg  = new Image();
+const mapImg   = new Image();
 let   mapReady = false;
 mapImg.onload  = () => { mapReady = true;  if (gameState) render(); };
 mapImg.onerror = () => { mapReady = false; if (gameState) render(); };
 mapImg.src = '/mapa.jpeg';
 
 // ─── Game state ───────────────────────────────────────────────────────────────
-let myTeam      = null;
+let myRole      = null;   // 'blue' | 'red' | 'facilitator'
 let gameState   = null;
 let selUnitId   = null;
-let moveHexes   = [];   // valid next-step neighbors for selected unit
+let moveHexes   = [];
 let atkHexes    = [];
 let pendingAtks = [];
 let hoverHex    = null;
-let activePath   = [];          // [{col,row},...] path being traced; [0] = unit start
-let plannedMoves = new Map();   // unitId → [{col,row},...] committed trajectories
-let selGroupIds  = [];          // unit ids acting together as a group (empty = single)
+let activePath   = [];
+let plannedMoves = new Map();
+let selGroupIds  = [];
 
 // ─── Socket ───────────────────────────────────────────────────────────────────
 const socket = io();
@@ -65,6 +59,7 @@ function rangeAgainst(rangeTable, targetCategory) {
   return Number(rangeTable[targetCategory] || 0);
 }
 
+// ─── Socket events ────────────────────────────────────────────────────────────
 socket.on('connect', () => {
   const action = sessionStorage.getItem('pendingAction');
   if (action === 'create') {
@@ -72,47 +67,72 @@ socket.on('connect', () => {
     socket.emit('create_room');
   } else if (action === 'join') {
     const code = sessionStorage.getItem('pendingCode');
+    const team = sessionStorage.getItem('pendingTeam');
     sessionStorage.removeItem('pendingAction');
     sessionStorage.removeItem('pendingCode');
-    if (code) socket.emit('join_room', { roomId: code });
+    sessionStorage.removeItem('pendingTeam');
+    if (code && team) socket.emit('join_room', { roomId: code, team });
   }
 });
 
-socket.on('room_created', ({roomId, team}) => {
-  myTeam = team;
-  roomDisplay.textContent = roomId;
-  lobbyMenu.classList.add('hidden');
-  lobbyWaiting.classList.remove('hidden');
+// Facilitador: sala criada
+socket.on('room_created', ({ roomId, role, ob }) => {
+  myRole = role || 'facilitator';
+  if (myRole === 'facilitator') {
+    lobbyScreen.classList.add('hidden');
+    configScreen.classList.remove('hidden');
+    facInit(roomId, ob);
+  }
 });
+
+// Jogador: entrou com sucesso
+socket.on('join_success', ({ role, roomId }) => {
+  myRole = role;
+  lobbyScreen.classList.add('hidden');
+  showWaitingForFacilitator(role);
+});
+
 socket.on('join_error', msg => showLobbyErr(msg));
 
-socket.on('game_start', ({team, state}) => {
-  myTeam = team; gameState = state;
+// Facilitador: jogador conectou
+socket.on('player_joined', data => {
+  facUpdatePlayerStatus(data);
+});
+
+// Jogo iniciado
+socket.on('game_start', ({ role, state }) => {
+  myRole = role;
+  gameState = state;
   selUnitId = null; selGroupIds = []; moveHexes = []; atkHexes = []; pendingAtks = [];
   activePath = []; plannedMoves.clear(); hideStackPicker();
   closeBrPanel();
   lobbyScreen.classList.add('hidden');
+  configScreen.classList.add('hidden');
+  $('waiting-screen').classList.add('hidden');
   gameScreen.classList.remove('hidden');
   gameOver.classList.add('hidden');
+  if (myRole === 'facilitator') setupFacilitatorUI();
   updateUI(); render();
 });
 
 socket.on('game_update', state => {
   const prevTurn   = gameState?.turn;
   const prevPhase  = gameState?.phase;
-  const prevMyDone = myTeam && gameState
-    ? (myTeam === 'blue' ? gameState.blueDone : gameState.redDone)
+  const prevMyDone = myRole && gameState && myRole !== 'facilitator'
+    ? (myRole === 'blue' ? gameState.blueDone : gameState.redDone)
     : false;
+
   gameState = state;
-  const myDoneNow = myTeam === 'blue' ? state.blueDone : state.redDone;
-  // Reset on: new turn, combat→movement, or my done flag was reset (new round)
-  if (state.turn !== prevTurn
-      || (prevPhase === 'combat' && state.phase === 'movement')
-      || (state.phase === 'movement' && prevMyDone && !myDoneNow)) {
+
+  const myDoneNow = myRole === 'blue' ? state.blueDone : state.redDone;
+  const shouldReset = state.turn !== prevTurn
+    || (prevPhase === 'combat' && state.phase === 'movement')
+    || (state.phase === 'movement' && prevMyDone && !myDoneNow);
+
+  if (shouldReset) {
     activePath = []; plannedMoves.clear(); selGroupIds = [];
     selUnitId = null; moveHexes = []; atkHexes = [];
-    hideStackPicker();
-    closeBrPanel(); // hide BR panel when new movement phase begins
+    hideStackPicker(); closeBrPanel();
   } else if (selUnitId) {
     const u = gameState.units.find(u => u.id === selUnitId && u.hp > 0);
     if (u) {
@@ -124,45 +144,164 @@ socket.on('game_update', state => {
       }
     } else { deselect(); }
   }
+
+  // Facilitador: atualiza painéis
+  if (myRole === 'facilitator') {
+    facUpdatePhaseUI(state.phase);
+    facRenderMessages(state.messages || []);
+    facRenderUnitManager(state);
+  }
+
+  // Aprovação de combate: abre painel automaticamente
+  if (myRole === 'facilitator' && state.phase === 'combat_approval') {
+    facShowCombatApproval(state);
+  }
+
   updateUI(); render();
 });
 
-socket.on('game_over', ({winner, state}) => {
-  gameState = state; updateUI(); render();
-  const mine = winner === myTeam;
-  winnerMsg.textContent = mine ? '🏆 VITÓRIA! Sua força prevaleceu.' : '💀 DERROTA. Sua frota foi afundada.';
-  winnerMsg.className   = mine ? 'victory' : 'defeat';
+// Facilitador: aprovação de movimentos solicitada
+socket.on('movement_approval_needed', state => {
+  gameState = state;
+  if (myRole === 'facilitator') {
+    facShowMovementApproval(state);
+    facRenderUnitManager(state);
+  }
+  updateUI(); render();
+});
+
+// Facilitador: aprovação de combate solicitada
+socket.on('combat_approval_needed', state => {
+  gameState = state;
+  if (myRole === 'facilitator') {
+    facShowCombatApproval(state);
+    facRenderUnitManager(state);
+  }
+  updateUI(); render();
+});
+
+socket.on('game_over', ({ winner, state }) => {
+  if (state) gameState = state;
+  if (gameState) gameState.winner = winner;
+  updateUI(); render();
+  if (myRole !== 'facilitator') {
+    const mine = winner === myRole;
+    winnerMsg.textContent = mine ? '🏆 VITÓRIA! Sua força prevaleceu.' : '💀 DERROTA. Sua frota foi afundada.';
+    winnerMsg.className   = mine ? 'victory' : 'defeat';
+  } else {
+    winnerMsg.textContent = winner === 'blue' ? '🏆 Força Azul venceu.' : '🏆 Força Vermelha venceu.';
+    winnerMsg.className   = 'victory';
+  }
   gameOver.classList.remove('hidden');
 });
+
+socket.on('player_disconnected', ({ role }) => {
+  flashError(`${role === 'blue' ? 'Azul' : role === 'red' ? 'Vermelho' : 'Facilitador'} desconectou.`);
+});
 socket.on('opponent_disconnected', () => disconnected.classList.remove('hidden'));
+
 socket.on('action_error', msg => {
   flashError(msg);
-  // Reverse optimistic done flag so the button becomes available again
-  if (gameState?.phase === 'movement') {
-    if (myTeam === 'blue') gameState.blueDone = false; else gameState.redDone = false;
+  if (gameState?.phase === 'movement' && myRole !== 'facilitator') {
+    if (myRole === 'blue') gameState.blueDone = false; else gameState.redDone = false;
     updateUI();
   }
 });
+
 socket.on('battle_round_result', data => handleBrResult(data));
+
 socket.on('fuel_alert', ({ name, type }) => {
   const msg = type === 'air_lost'
     ? `✈ ${name} perdida por falta de combustível!`
-    : `⛽ ${name} sem combustível — imóvel e indefesa até reabastecimento.`;
+    : `⛽ ${name} sem combustível — imóvel e indefesa.`;
   flashError(msg);
 });
 
-// ─── Lobby actions ────────────────────────────────────────────────────────────
-btnCreate.addEventListener('click', () => socket.emit('create_room'));
-btnJoin.addEventListener('click', () => {
-  const code = roomInput.value.trim().toUpperCase();
-  if (code) socket.emit('join_room', {roomId: code});
+// Mensagem do facilitador (para jogadores)
+socket.on('facilitator_message', msg => {
+  if (myRole === 'facilitator') return;
+  showPlayerMessage(msg);
 });
-roomInput.addEventListener('keydown', e => { if (e.key === 'Enter') btnJoin.click(); });
 
-// ─── Game actions ─────────────────────────────────────────────────────────────
-endPhaseBtn.addEventListener('click', () => {
+// Resposta de jogador (para facilitador)
+socket.on('player_reply', ({ messageId, reply }) => {
+  if (myRole !== 'facilitator') return;
+  if (gameState?.messages) {
+    const m = gameState.messages.find(m => m.id === messageId);
+    if (m) m.replies.push(reply);
+    facRenderMessages(gameState.messages);
+  }
+});
+
+// ─── Lobby ────────────────────────────────────────────────────────────────────
+$('btn-create-fac').addEventListener('click', () => socket.emit('create_room'));
+
+$('btn-join-blue').addEventListener('click', () => {
+  const code = roomInput.value.trim().toUpperCase();
+  if (!code) return;
+  socket.emit('join_room', { roomId: code, team: 'blue' });
+});
+
+$('btn-join-red').addEventListener('click', () => {
+  const code = roomInput.value.trim().toUpperCase();
+  if (!code) return;
+  socket.emit('join_room', { roomId: code, team: 'red' });
+});
+
+roomInput.addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-join-blue').click(); });
+
+function showWaitingForFacilitator(role) {
+  const el = $('waiting-screen');
+  el.classList.remove('hidden');
+  const label = role === 'blue' ? 'FORÇA AZUL' : 'FORÇA VERMELHA';
+  const cls   = role === 'blue' ? 'blue' : 'red';
+  el.querySelector('.waiting-role').textContent  = label;
+  el.querySelector('.waiting-role').className    = `waiting-role ${cls}`;
+}
+
+// ─── Jogador: popup de mensagem ───────────────────────────────────────────────
+let _currentMsgId = null;
+
+function showPlayerMessage(msg) {
+  const overlay = $('player-msg-overlay');
+  const textEl  = $('player-msg-text');
+  const idEl    = $('player-msg-id');
+  if (!overlay) return;
+  textEl.textContent = msg.text;
+  idEl.dataset.msgid = msg.id;
+  _currentMsgId = msg.id;
+  overlay.classList.remove('hidden');
+}
+
+function playerSendReply() {
+  const input = $('player-msg-reply');
+  const text  = input?.value?.trim();
+  if (!text || !_currentMsgId) return;
+  socket.emit('player_reply', { messageId: _currentMsgId, text });
+  input.value = '';
+  $('player-msg-overlay').classList.add('hidden');
+  _currentMsgId = null;
+}
+
+function playerDismissMessage() {
+  $('player-msg-overlay').classList.add('hidden');
+  _currentMsgId = null;
+}
+
+// ─── Config: tab switching (delegated from HTML onclick) ──────────────────────
+function facSwitchTabWrapper(team) { facSwitchTab(team); }
+
+// ─── Facilitador: setup pós game_start ───────────────────────────────────────
+function setupFacilitatorUI() {
+  const sidebar = document.querySelector('.sidebar');
+  if (sidebar) sidebar.classList.add('fac-sidebar');
+  $('fac-panels').classList.remove('hidden');
+  $('player-panels').classList.add('hidden');
+}
+
+// ─── Game actions (players only) ──────────────────────────────────────────────
+if (endPhaseBtn) endPhaseBtn.addEventListener('click', () => {
   if (!isMyTurn()) return;
-  // Save active path (individual or group) before submitting
   if (selUnitId !== null && activePath.length > 1) {
     const ids = selGroupIds.length > 0 ? selGroupIds : [selUnitId];
     for (const id of ids) plannedMoves.set(id, [...activePath]);
@@ -172,32 +311,28 @@ endPhaseBtn.addEventListener('click', () => {
     if (path.length > 1) moves.push({ unitId, path });
   }
   socket.emit('commit_moves', { moves });
-  // Optimistically mark done to prevent double-submission; reversed on action_error
-  if (myTeam === 'blue') gameState.blueDone = true; else gameState.redDone = true;
+  if (myRole === 'blue') gameState.blueDone = true; else gameState.redDone = true;
   activePath = []; plannedMoves.clear(); selGroupIds = [];
   selUnitId = null; moveHexes = []; atkHexes = [];
-  hideStackPicker();
-  updateUI(); render();
+  hideStackPicker(); updateUI(); render();
 });
 
-combatBtn.addEventListener('click', () => {
+if (combatBtn) combatBtn.addEventListener('click', () => {
   if (!isMyTurn()) return;
   socket.emit('declare_attacks', pendingAtks);
   pendingAtks = []; deselect();
 });
 
-undoStepBtn.addEventListener('click', () => undoStep());
+if (undoStepBtn) undoStepBtn.addEventListener('click', () => undoStep());
+if (cancelBtn)   cancelBtn.addEventListener('click',   () => { hideStackPicker(); deselect(false); });
 
-cancelBtn.addEventListener('click', () => { hideStackPicker(); deselect(false); });
+$('btn-restart')?.addEventListener('click', () => { socket.emit('restart'); gameOver.classList.add('hidden'); });
+$('br-btn-continue')?.addEventListener('click', () => sendBrDecision('continue'));
+$('br-btn-stop')?.addEventListener('click',     () => sendBrDecision('stop'));
+$('br-btn-ok')?.addEventListener('click',       () => onBrOk());
+$('btn-back')?.addEventListener('click',        () => location.reload());
 
-$('btn-restart').addEventListener('click', () => { socket.emit('restart'); gameOver.classList.add('hidden'); });
-$('br-btn-continue').addEventListener('click', () => sendBrDecision('continue'));
-$('br-btn-stop'    ).addEventListener('click', () => sendBrDecision('stop'));
-$('br-btn-ok'      ).addEventListener('click', () => onBrOk());
-$('btn-back').addEventListener('click', () => location.reload());
-
-// Amount +/- controls in unit panel (event delegation)
-$('unit-panel').addEventListener('click', e => {
+$('unit-panel')?.addEventListener('click', e => {
   const btn = e.target.closest('[data-atk-adj]');
   if (!btn) return;
   const attackerId = btn.dataset.attacker;
@@ -220,7 +355,7 @@ canvas.addEventListener('mousemove', e => {
   if (h.col >= 0 && h.col < GRID_W && h.row >= 0 && h.row < GRID_H) {
     const t = TERRAIN_MAP[h.row][h.col];
     const inf = INFRA.filter(i => i.col === h.col && i.row === h.row);
-    let tip = `${hexLabel(h.col)}${h.row + 1} · ${T_NAME[t]}`;
+    let tip = `${hexLabel(h.col)}${h.row+1} · ${T_NAME[t]}`;
     if (inf.length) tip += ' · ' + inf.map(i => i.name).join(', ');
     terrainTip.textContent = tip;
     terrainTip.style.display = 'block';
@@ -229,11 +364,8 @@ canvas.addEventListener('mousemove', e => {
   }
   render();
 });
-canvas.addEventListener('mouseleave', () => {
-  hoverHex = null;
-  terrainTip.style.display = 'none';
-  render();
-});
+canvas.addEventListener('mouseleave', () => { hoverHex = null; terrainTip.style.display='none'; render(); });
+
 canvas.addEventListener('click', e => {
   if (!gameState) return;
   const r  = canvas.getBoundingClientRect();
@@ -247,42 +379,66 @@ canvas.addEventListener('click', e => {
 function handleClick(col, row) {
   if (!gameState || gameState.winner) return;
   if (col < 0 || col >= GRID_W || row < 0 || row >= GRID_H) return;
-  const {phase} = gameState;
 
-  // Dismiss open picker
+  // Facilitador: reposicionamento de unidade
+  if (myRole === 'facilitator') {
+    // Durante aprovação de movimentos: reposicionamento temporário
+    if (gameState.phase === 'movement_approval' && facHandleMapClickForRepo(col, row)) {
+      // Aplica override visual (simulado via reposition)
+      socket.emit('facilitator_reposition', { unitId: facRepoUnitId || '', col, row });
+      return;
+    }
+    // Fora de aprovação: reposicionamento imediato
+    if (facRepoUnitId) {
+      socket.emit('facilitator_reposition', { unitId: facRepoUnitId, col, row });
+      facRepoUnitId = null;
+      showFacNotice(`Unidade movida para ${String.fromCharCode(65+col)}${row+1}`);
+      return;
+    }
+
+    // Facilitador pode selecionar unidade para reposicionar
+    const anyUnit = gameState.units.filter(u => u.col === col && u.row === row && u.hp > 0);
+    if (anyUnit.length > 0) {
+      facRepoUnitId = anyUnit[0].id;
+      showFacNotice(`${anyUnit[0].name} selecionada. Clique no mapa para mover.`);
+    }
+    return;
+  }
+
+  // Jogadores
+  const {phase} = gameState;
   if (!stackPicker.classList.contains('hidden')) { hideStackPicker(); return; }
 
-  // ── Combat phase ──
+  if (phase === 'movement_approval' || phase === 'combat_approval') return; // aguardando facilitador
+
   if (phase === 'combat') {
     if (isMyTurn() && selUnitId !== null) {
       const atk = atkHexes.find(h => h.col === col && h.row === row);
       if (atk) {
         if (selGroupIds.length > 0) {
-          // Toggle attacks for all group units that can reach this target
-          const allDeclared = selGroupIds.every(id =>
-            pendingAtks.some(a => a.attackerId === id && a.targetId === atk.unitId));
+          const allDeclared = selGroupIds.every(id => pendingAtks.some(a => a.attackerId === id && a.targetId === atk.unitId));
           if (allDeclared) {
-            pendingAtks = pendingAtks.filter(a =>
-              !(selGroupIds.includes(a.attackerId) && a.targetId === atk.unitId));
+            pendingAtks = pendingAtks.filter(a => !(selGroupIds.includes(a.attackerId) && a.targetId === atk.unitId));
           } else {
             for (const id of selGroupIds) {
               const gu = gameState.units.find(u => u.id === id && u.hp > 0);
               if (!gu) continue;
-              if (rangeAgainst(gu.attackRange, atk.category) >= 1 && hexDist(gu.col, gu.row, atk.col, atk.row) <= rangeAgainst(gu.attackRange, atk.category)
-                  && !pendingAtks.some(a => a.attackerId === id && a.targetId === atk.unitId)) {
-                pendingAtks.push({attackerId: id, targetId: atk.unitId, amount: 1});
+              if (rangeAgainst(gu.attackRange, atk.category) >= 1 &&
+                  hexDist(gu.col, gu.row, atk.col, atk.row) <= rangeAgainst(gu.attackRange, atk.category) &&
+                  !pendingAtks.some(a => a.attackerId === id && a.targetId === atk.unitId)) {
+                pendingAtks.push({ attackerId: id, targetId: atk.unitId, amount: 1 });
               }
             }
           }
         } else {
           const idx = pendingAtks.findIndex(a => a.attackerId === selUnitId && a.targetId === atk.unitId);
           if (idx >= 0) pendingAtks.splice(idx, 1);
-          else pendingAtks.push({attackerId: selUnitId, targetId: atk.unitId, amount: 1});
+          else pendingAtks.push({ attackerId: selUnitId, targetId: atk.unitId, amount: 1 });
         }
         updateUI(); render(); return;
       }
     }
-    const ownUnits = gameState.units.filter(u => u.col === col && u.row === row && u.hp > 0 && u.team === myTeam);
+    const ownUnits = gameState.units.filter(u => u.col === col && u.row === row && u.hp > 0 && u.team === myRole);
     if (ownUnits.length > 1) { showStackPicker(col, row, ownUnits); return; }
     if (ownUnits.length === 1) {
       selGroupIds = []; selUnitId = ownUnits[0].id;
@@ -291,13 +447,11 @@ function handleClick(col, row) {
     return;
   }
 
-  // ── Movement phase ──
   if (phase === 'movement' && isMyTurn()) {
-    // Extend current path with a valid next step
     if (selUnitId !== null) {
       const move = moveHexes.find(h => h.col === col && h.row === row);
       if (move) {
-        activePath.push({col, row});
+        activePath.push({ col, row });
         if (selGroupIds.length > 0) {
           const gUnits = gameState.units.filter(u => selGroupIds.includes(u.id) && u.hp > 0);
           recalcHighlightsGroup(gUnits);
@@ -308,22 +462,19 @@ function handleClick(col, row) {
         updateUI(); render(); return;
       }
     }
-    // Click on own unit(s)
-    const ownUnits = gameState.units.filter(u => u.col === col && u.row === row && u.hp > 0 && u.team === myTeam);
+    const ownUnits = gameState.units.filter(u => u.col === col && u.row === row && u.hp > 0 && u.team === myRole);
     if (ownUnits.length === 0) { deselect(true); return; }
-    if (ownUnits.length > 1) { deselect(true); showStackPicker(col, row, ownUnits); return; }
+    if (ownUnits.length > 1)   { deselect(true); showStackPicker(col, row, ownUnits); return; }
     const unit = ownUnits[0];
-    if (selUnitId === unit.id && selGroupIds.length === 0) return; // already selected alone
+    if (selUnitId === unit.id && selGroupIds.length === 0) return;
     deselect(true);
     selUnitId = unit.id; selGroupIds = [];
     const saved = plannedMoves.get(unit.id);
-    activePath = saved ? [...saved] : [{col: unit.col, row: unit.row}];
+    activePath = saved ? [...saved] : [{ col: unit.col, row: unit.row }];
     recalcHighlights(unit); updateUI(); render();
-    return;
   }
 }
 
-// save=true saves activePath to plannedMoves; save=false discards it
 function deselect(save = true) {
   if (selUnitId !== null) {
     const ids = selGroupIds.length > 0 ? selGroupIds : [selUnitId];
@@ -350,12 +501,11 @@ function undoStep() {
   updateUI(); render();
 }
 
-// ─── Group recalc ─────────────────────────────────────────────────────────────
 function recalcHighlightsGroup(units) {
   const {phase} = gameState;
   if (phase === 'movement' && isMyTurn()) {
-    const minMov     = Math.min(...units.map(u => u.movement));
-    const stepsTaken = activePath.length - 1;
+    const minMov    = Math.min(...units.map(u => u.movement));
+    const stepsTaken= activePath.length - 1;
     if (stepsTaken < minMov) {
       const lastHex = activePath[activePath.length - 1];
       const inPath  = new Set(activePath.map(h => `${h.col},${h.row}`));
@@ -368,32 +518,30 @@ function recalcHighlightsGroup(units) {
 
   if (phase === 'combat' && isMyTurn()) {
     atkHexes = [];
-    const enemies = gameState.units.filter(u => u.team !== myTeam && u.hp > 0 && u.detected);
+    const enemies = gameState.units.filter(u => u.team !== myRole && u.team !== 'neutral' && u.hp > 0 && u.detected);
     for (const e of enemies) {
       if (units.some(u => hexDist(u.col, u.row, e.col, e.row) <= rangeAgainst(u.attackRange, e.category))) {
-        atkHexes.push({col: e.col, row: e.row, unitId: e.id, category: e.category});
+        atkHexes.push({ col: e.col, row: e.row, unitId: e.id, category: e.category });
       }
     }
   } else { atkHexes = []; }
 }
 
-// ─── Stack picker ─────────────────────────────────────────────────────────────
 function showStackPicker(col, row, units) {
   spList.innerHTML = '';
   for (const u of units) {
     const btn = document.createElement('button');
     btn.className = 'sp-unit-btn';
-    const c = u.team === 'blue' ? 'var(--blue-l)' : 'var(--red-l)';
+    const c = u.team === 'blue' ? 'var(--blue-l)' : u.team === 'red' ? 'var(--red-l)' : '#aaffaa';
     btn.innerHTML = `<span style="color:${c}">${u.name}</span> · ${u.hp}/${u.maxHp}SP`;
     btn.addEventListener('click', () => { hideStackPicker(); _selectUnit(u); });
     spList.appendChild(btn);
   }
   spGroupBtn.onclick = () => { hideStackPicker(); _selectGroup(units); };
-
   const {x, y} = hexToPixel(col, row);
-  const rect  = canvas.getBoundingClientRect();
-  const wrap  = canvas.parentElement.getBoundingClientRect();
-  const scale = rect.width / canvas.width;
+  const rect   = canvas.getBoundingClientRect();
+  const wrap   = canvas.parentElement.getBoundingClientRect();
+  const scale  = rect.width / canvas.width;
   const sx = rect.left - wrap.left + x * scale;
   const sy = rect.top  - wrap.top  + (y + HEX_R) * scale + 6;
   stackPicker.style.left = `${Math.round(sx - 85)}px`;
@@ -409,7 +557,7 @@ function _selectUnit(unit) {
     deselect(true);
     selUnitId = unit.id;
     const saved = plannedMoves.get(unit.id);
-    activePath = saved ? [...saved] : [{col: unit.col, row: unit.row}];
+    activePath = saved ? [...saved] : [{ col: unit.col, row: unit.row }];
     recalcHighlights(unit);
   } else {
     selUnitId = unit.id; recalcHighlights(unit);
@@ -424,7 +572,7 @@ function _selectGroup(units) {
     selGroupIds = ids; selUnitId = ids[0];
     for (const id of ids) plannedMoves.delete(id);
     const lead = units[0];
-    activePath = [{col: lead.col, row: lead.row}];
+    activePath = [{ col: lead.col, row: lead.row }];
     recalcHighlightsGroup(units);
   } else {
     selGroupIds = ids; selUnitId = ids[0];
@@ -435,7 +583,6 @@ function _selectGroup(units) {
 
 function recalcHighlights(unit) {
   const {phase} = gameState;
-
   if (phase === 'movement' && isMyTurn()) {
     const stepsTaken = activePath.length - 1;
     if (stepsTaken < unit.movement) {
@@ -445,49 +592,165 @@ function recalcHighlights(unit) {
         if (inPath.has(`${nb.col},${nb.row}`)) return false;
         return canEnterTerrain(unit.category, TERRAIN_MAP[nb.row][nb.col]);
       });
-    } else {
-      moveHexes = [];
-    }
-  } else {
-    moveHexes = [];
-  }
+    } else { moveHexes = []; }
+  } else { moveHexes = []; }
 
   if (phase === 'combat' && isMyTurn()) {
     atkHexes = [];
-    const enemies = gameState.units.filter(u => u.team !== myTeam && u.hp > 0 && u.detected);
+    const enemies = gameState.units.filter(u => u.team !== myRole && u.team !== 'neutral' && u.hp > 0 && u.detected);
     for (const e of enemies) {
       if (hexDist(unit.col, unit.row, e.col, e.row) <= rangeAgainst(unit.attackRange, e.category)) {
-        atkHexes.push({col: e.col, row: e.row, unitId: e.id, category: e.category});
+        atkHexes.push({ col: e.col, row: e.row, unitId: e.id, category: e.category });
       }
     }
-  } else {
-    atkHexes = [];
-  }
+  } else { atkHexes = []; }
 }
 
 function isMyTurn() {
-  if (!gameState) return false;
+  if (!gameState || myRole === 'facilitator') return false;
   const {phase, blueDone, redDone} = gameState;
-  if (phase === 'movement') return myTeam === 'blue' ? !blueDone : !redDone;
-  if (phase === 'combat')   return myTeam === 'blue' ? gameState.blueAttacks === null : gameState.redAttacks === null;
+  if (phase === 'movement') return myRole === 'blue' ? !blueDone : !redDone;
+  if (phase === 'combat')   return myRole === 'blue' ? gameState.blueAttacks === null : gameState.redAttacks === null;
   return false;
+}
+
+// ─── UI update ────────────────────────────────────────────────────────────────
+function updateUI() {
+  if (!gameState) return;
+  const {turn, period, phase, units, log, winner} = gameState;
+
+  if (myRole === 'facilitator') {
+    teamBadge.textContent = 'FACILITADOR';
+    teamBadge.className   = 'team-badge fac';
+  } else {
+    teamBadge.textContent = myRole === 'blue' ? 'FORÇA AZUL' : 'FORÇA VERMELHA';
+    teamBadge.className   = `team-badge ${myRole}`;
+  }
+
+  turnLabel.textContent  = `Turno ${turn}`;
+  periodLabel.textContent= period === 'day' ? '☀ Diurno' : '🌙 Noturno';
+
+  const phaseLabels = {
+    movement: 'Movimentação',
+    movement_approval: 'Aprovação de Movimentos',
+    combat: 'Combate',
+    combat_approval: 'Aprovação de Combate',
+  };
+  phaseLabel.textContent = phaseLabels[phase] || phase;
+
+  myTurnBanner.classList.toggle('visible', isMyTurn() && !winner);
+
+  // Esconder botões de ação para facilitador e para fases de aprovação
+  const isApprovalPhase = phase === 'movement_approval' || phase === 'combat_approval';
+  if (endPhaseBtn) endPhaseBtn.classList.add('hidden');
+  if (combatBtn)   combatBtn.classList.add('hidden');
+  if (undoStepBtn) undoStepBtn.classList.add('hidden');
+  if (cancelBtn)   cancelBtn.classList.toggle('hidden', selUnitId === null);
+
+  if (myRole !== 'facilitator' && isMyTurn() && !winner && !isApprovalPhase) {
+    if (phase === 'movement') {
+      endPhaseBtn.classList.remove('hidden');
+      const n = plannedMoves.size + (selUnitId !== null && activePath.length > 1 && !plannedMoves.has(selUnitId) ? 1 : 0);
+      endPhaseBtn.textContent = n > 0 ? `Encerrar Movimentação (${n})` : 'Encerrar Movimentação';
+      if (selUnitId !== null && activePath.length > 1) undoStepBtn.classList.remove('hidden');
+    }
+    if (phase === 'combat') combatBtn.classList.remove('hidden');
+  }
+  if (combatBtn) combatBtn.textContent = `Confirmar Ataques (${pendingAtks.length})`;
+
+  // Mensagem de espera para jogadores em fases de aprovação
+  const waitBanner = $('waiting-approval-banner');
+  if (waitBanner) {
+    waitBanner.classList.toggle('hidden', !isApprovalPhase || myRole === 'facilitator');
+    if (isApprovalPhase) {
+      waitBanner.textContent = phase === 'movement_approval'
+        ? '⌛ Aguardando aprovação do Facilitador (movimentos)...'
+        : '⌛ Aguardando aprovação do Facilitador (combate)...';
+    }
+  }
+
+  const b = units.filter(u => u.team === 'blue'    && u.hp > 0).length;
+  const r = units.filter(u => u.team === 'red'     && u.hp > 0).length;
+  const n = units.filter(u => u.team === 'neutral' && u.hp > 0).length;
+  fleetBlue.textContent = `Azul: ${b}`;
+  fleetRed.textContent  = `Verm: ${r}`;
+  const fleetNeu = $('fleet-neutral');
+  if (fleetNeu) fleetNeu.textContent = `Neut: ${n}`;
+
+  // Unit info panel
+  const sel = selUnitId ? gameState.units.find(u => u.id === selUnitId && u.hp > 0) : null;
+  if (sel && unitPanel) {
+    const hpPct = sel.hp / sel.maxHp * 100;
+    const bar   = hpPct > 60 ? '#69f0ae' : hpPct > 30 ? '#ffca28' : '#ff5252';
+    const t     = sel.col >= 0 ? TERRAIN_MAP[sel.row][sel.col] : 3;
+    const pathSteps    = activePath.length - 1;
+    const pathStepsMov = selGroupIds.length > 0
+      ? Math.min(...selGroupIds.map(id => { const u2=gameState.units.find(u=>u.id===id); return u2?u2.movement:99; }))
+      : sel.movement;
+    const pathHint   = pathSteps > 0 ? `<div class="u-hint">Caminho: ${pathSteps}/${pathStepsMov} passo(s)</div>` : '';
+    const groupHint  = selGroupIds.length > 1 ? `<div class="u-hint">Grupo: ${selGroupIds.length} unidades</div>` : '';
+    const myAtks     = selGroupIds.length > 0
+      ? pendingAtks.filter(a => selGroupIds.includes(a.attackerId))
+      : pendingAtks.filter(a => a.attackerId === sel.id);
+    const det  = sel.detectionRange || {};
+    const comp = (sel.composition||[]).map(c=>`${c.quantity}× ${c.type}`).join(' · ');
+    const wpns = sel.weapons || {};
+    const initW= sel.initWeapons || {};
+    const wpnLines = Object.entries(wpns)
+      .filter(([,w])=>w.quantity>0||(initW[w]?.quantity??0)>0)
+      .map(([k,w])=>`${k.toUpperCase()}: <b>${w.quantity}</b>/${initW[k]?.quantity??w.quantity}`);
+    const caps = sel.capabilities || {};
+    const capLines = Object.entries(caps).filter(([,v])=>v>0).map(([k,v])=>`${k.toUpperCase()}: ${v}`);
+    const teamColor = sel.team === 'blue' ? 'blue' : sel.team === 'red' ? 'red' : 'neutral';
+
+    // Botão de gerenciamento rápido para facilitador
+    const facBtn = myRole === 'facilitator'
+      ? `<div style="margin-top:6px;display:flex;gap:4px;">
+          <button class="fac-small-btn" style="flex:1" onclick="facQuickEditUnit('${sel.id}','${sel.name}',${sel.hp},${sel.maxHp})">✏ Editar SP</button>
+          <button class="fac-small-btn" style="flex:1" onclick="facSelectRepoUnit('${sel.id}')">📍 Mover</button>
+         </div>` : '';
+
+    unitPanel.innerHTML = `
+      <div class="u-name ${teamColor}">${sel.name}</div>
+      <div class="hp-bar"><div class="hp-fill" style="width:${hpPct}%;background:${bar}"></div></div>
+      <div class="u-stats">
+        <span>SP</span><span>${sel.hp}/${sel.maxHp}</span>
+        <span>MOV</span><span>${sel.movement}</span>
+        <span>Equipe</span><span>${sel.team}</span>
+        ${fuelRow(sel)}
+        <span>Det S/Aé/Sb/T</span><span>${det.surface||0}/${det.air||0}/${det.submarine||0}/${det.land||0}</span>
+        <span>Terreno</span><span style="font-size:0.7em">${T_NAME[t]}</span>
+      </div>
+      ${wpnLines.length ? `<div class="u-hint" style="font-size:0.67rem;line-height:1.7">🚀 ${wpnLines.join(' · ')}</div>` : ''}
+      ${capLines.length ? `<div class="u-hint" style="color:var(--text-dim);font-size:0.67rem;line-height:1.7">⚙ ${capLines.join(' · ')}</div>` : ''}
+      ${comp ? `<div class="u-hint" style="color:var(--dim);font-size:0.67rem;line-height:1.5">${comp}</div>` : ''}
+      ${groupHint}${pathHint}
+      ${atkHexes.length && myRole !== 'facilitator' ? '<div class="u-hint">Clique em alvos vermelhos p/ declarar ataque</div>' : ''}
+      ${myAtks.length ? buildAtkListHtml(myAtks) : ''}
+      ${facBtn}
+    `;
+  } else if (unitPanel) {
+    const hint = myRole === 'facilitator'
+      ? '<p class="no-sel">Clique em qualquer unidade para ver detalhes</p>'
+      : '<p class="no-sel">Clique em uma unidade sua</p>';
+    unitPanel.innerHTML = hint;
+  }
+
+  logEl.innerHTML = (log||[]).map(l=>`<p>${l}</p>`).join('');
 }
 
 function fuelRow(unit) {
   const f = unit.fuel;
-  if (!f || !f.usesFuel) {
-    return `<span>Combustível</span><span class="fp-inf">∞</span>`;
-  }
+  if (!f || !f.usesFuel) return `<span>Combustível</span><span class="fp-inf">∞</span>`;
   if (unit.category === 'air') {
-    const STATUS = { ready: 'Pronta', airborne: 'Em voo', recovering: 'Reabastecendo' };
+    const STATUS = { ready:'Pronta', airborne:'Em voo', recovering:'Reabastecendo' };
     const statusLabel = STATUS[unit.airStatus] || unit.airStatus || '—';
     const fpLabel = unit.airStatus === 'ready' || unit.airStatus === 'recovering'
-      ? `${f.max} FP` : `${f.current ?? 0}/${f.max} FP`;
-    const fpClass = (f.current ?? f.max) <= Math.ceil(f.max * 0.25) ? 'fp-low' : 'fp-ok';
+      ? `${f.max} FP` : `${f.current??0}/${f.max} FP`;
+    const fpClass = (f.current??f.max) <= Math.ceil(f.max*0.25) ? 'fp-low' : 'fp-ok';
     return `<span>Status</span><span>${statusLabel}</span>
             <span>Combustível</span><span class="${fpClass}">${fpLabel}</span>`;
   }
-  // Naval
   const cur = f.current ?? 0;
   const pct = f.max > 0 ? cur / f.max : 0;
   const cls = cur <= 0 ? 'fp-empty' : pct <= 0.25 ? 'fp-low' : 'fp-ok';
@@ -497,12 +760,11 @@ function fuelRow(unit) {
 function buildAtkListHtml(atks) {
   if (!atks.length) return '';
   const items = atks.map(a => {
-    const tgt = gameState?.units.find(u => u.id === a.targetId);
-    const tgtName = tgt?.name || a.targetId;
-    // Max amount: largest weapon quantity on the attacker (server will cap anyway)
-    const attUnit = gameState?.units.find(u => u.id === a.attackerId);
-    const maxAmt  = attUnit ? Math.max(1, ...Object.values(attUnit.weapons || {}).map(w => w.quantity || 0)) : 4;
-    const amt = a.amount || 1;
+    const tgt    = gameState?.units.find(u => u.id === a.targetId);
+    const tgtName= tgt?.name || a.targetId;
+    const attUnit= gameState?.units.find(u => u.id === a.attackerId);
+    const maxAmt = attUnit ? Math.max(1, ...Object.values(attUnit.weapons||{}).map(w=>w.quantity||0)) : 4;
+    const amt    = a.amount || 1;
     return `<div class="atk-entry">
       <span class="atk-target">→ ${tgtName}</span>
       <span class="atk-amt-ctrl">
@@ -513,99 +775,6 @@ function buildAtkListHtml(atks) {
     </div>`;
   }).join('');
   return `<div class="atk-list"><div class="atk-list-title">Ataques declarados:</div>${items}</div>`;
-}
-
-// ─── UI update ────────────────────────────────────────────────────────────────
-function updateUI() {
-  if (!gameState) return;
-  const {turn, period, phase, units, log, winner} = gameState;
-
-  teamBadge.textContent  = myTeam === 'blue' ? 'FORÇA AZUL' : 'FORÇA VERMELHA';
-  teamBadge.className    = `team-badge ${myTeam}`;
-  turnLabel.textContent  = `Turno ${turn}`;
-  periodLabel.textContent= period === 'day' ? '☀ Diurno' : '🌙 Noturno';
-  phaseLabel.textContent = phase === 'movement' ? 'Movimentação' : 'Combate';
-
-  myTurnBanner.classList.toggle('visible', isMyTurn() && !winner);
-
-  endPhaseBtn.classList.add('hidden');
-  combatBtn.classList.add('hidden');
-  undoStepBtn.classList.add('hidden');
-  cancelBtn.classList.toggle('hidden', selUnitId === null);
-
-  if (isMyTurn() && !winner) {
-    if (phase === 'movement') {
-      endPhaseBtn.classList.remove('hidden');
-      const n = plannedMoves.size + (selUnitId !== null && activePath.length > 1 && !plannedMoves.has(selUnitId) ? 1 : 0);
-      endPhaseBtn.textContent = n > 0 ? `Encerrar Movimentação (${n})` : 'Encerrar Movimentação';
-      if (selUnitId !== null && activePath.length > 1) {
-        undoStepBtn.classList.remove('hidden');
-      }
-    }
-    if (phase === 'combat') combatBtn.classList.remove('hidden');
-  }
-  combatBtn.textContent = `Confirmar Ataques (${pendingAtks.length})`;
-
-  const b = units.filter(u => u.team === 'blue' && u.hp > 0).length;
-  const r = units.filter(u => u.team === 'red'  && u.hp > 0).length;
-  fleetBlue.textContent = `Azul: ${b}`;
-  fleetRed.textContent  = `Verm: ${r}`;
-
-  const sel = selUnitId ? gameState.units.find(u => u.id === selUnitId && u.hp > 0) : null;
-  if (sel) {
-    const hpPct = sel.hp / sel.maxHp * 100;
-    const bar   = hpPct > 60 ? '#69f0ae' : hpPct > 30 ? '#ffca28' : '#ff5252';
-    const t     = sel.col >= 0 ? TERRAIN_MAP[sel.row][sel.col] : 3;
-    const pathSteps    = activePath.length - 1;
-    const pathStepsMov = selGroupIds.length > 0
-      ? Math.min(...selGroupIds.map(id => { const u2 = gameState.units.find(u => u.id === id); return u2 ? u2.movement : 99; }))
-      : sel.movement;
-    const pathHint  = pathSteps > 0
-      ? `<div class="u-hint">Caminho: ${pathSteps}/${pathStepsMov} passo(s)</div>` : '';
-    const groupHint = selGroupIds.length > 1
-      ? `<div class="u-hint">Grupo: ${selGroupIds.length} unidades em conjunto</div>` : '';
-    const myAtks = selGroupIds.length > 0
-      ? pendingAtks.filter(a => selGroupIds.includes(a.attackerId))
-      : pendingAtks.filter(a => a.attackerId === sel.id);
-    const det  = sel.detectionRange || {};
-    const comp = (sel.composition||[]).map(c=>`${c.quantity}× ${c.type}`).join(' · ');
-
-    // Weapons inventory
-    const wpns = sel.weapons || {};
-    const initW = sel.initWeapons || {};
-    const wpnLines = Object.entries(wpns)
-      .filter(([, w]) => w.quantity > 0 || (initW[w]?.quantity ?? 0) > 0)
-      .map(([k, w]) => `${k.toUpperCase()}: <b>${w.quantity}</b>/${initW[k]?.quantity ?? w.quantity}`);
-
-    // Persistent capabilities
-    const caps = sel.capabilities || {};
-    const capLines = Object.entries(caps)
-      .filter(([, v]) => v > 0)
-      .map(([k, v]) => `${k.toUpperCase()}: ${v}`);
-
-    unitPanel.innerHTML = `
-      <div class="u-name ${sel.team}">${sel.name}</div>
-      <div class="hp-bar"><div class="hp-fill" style="width:${hpPct}%;background:${bar}"></div></div>
-      <div class="u-stats">
-        <span>SP</span><span>${sel.hp}/${sel.maxHp}</span>
-        <span>MOV</span><span>${sel.movement}</span>
-        <span>Categoria</span><span>${sel.category}</span>
-        ${fuelRow(sel)}
-        <span>Det S/Aé/Sb/T</span><span>${det.surface||0}/${det.air||0}/${det.submarine||0}/${det.land||0}</span>
-        <span>Terreno</span><span style="font-size:0.7em">${T_NAME[t]}</span>
-      </div>
-      ${wpnLines.length ? `<div class="u-hint" style="font-size:0.67rem;line-height:1.7">🚀 ${wpnLines.join(' · ')}</div>` : ''}
-      ${capLines.length ? `<div class="u-hint" style="color:var(--text-dim);font-size:0.67rem;line-height:1.7">⚙ ${capLines.join(' · ')}</div>` : ''}
-      ${comp ? `<div class="u-hint" style="color:var(--dim);font-size:0.67rem;line-height:1.5">${comp}</div>` : ''}
-      ${groupHint}
-      ${pathHint}
-      ${atkHexes.length ? '<div class="u-hint">Clique em alvos vermelhos p/ declarar ataque</div>' : ''}
-      ${myAtks.length ? buildAtkListHtml(myAtks) : ''}
-    `;
-  } else {
-    unitPanel.innerHTML = '<p class="no-sel">Clique em uma unidade sua</p>';
-  }
-  logEl.innerHTML = (log||[]).map(l=>`<p>${l}</p>`).join('');
 }
 
 // ═══ RENDERING ════════════════════════════════════════════════════════════════
@@ -621,407 +790,264 @@ function render() {
   if (hoverHex) drawHover();
 }
 
-// ── Layer 1: Background ───────────────────────────────────────────────────────
 function drawBackground() {
-  if (mapReady) {
-    ctx.drawImage(mapImg, 0, 0, CVS_W, CVS_H);
-  } else {
-    const g = ctx.createLinearGradient(0, 0, CVS_W, CVS_H);
-    g.addColorStop(0.0, '#0d2a45');
-    g.addColorStop(0.2, '#0a2238');
-    g.addColorStop(1.0, '#071520');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, CVS_W, CVS_H);
+  if (mapReady) ctx.drawImage(mapImg, 0, 0, CVS_W, CVS_H);
+  else {
+    const g = ctx.createLinearGradient(0,0,CVS_W,CVS_H);
+    g.addColorStop(0.0,'#0d2a45'); g.addColorStop(0.2,'#0a2238'); g.addColorStop(1.0,'#071520');
+    ctx.fillStyle=g; ctx.fillRect(0,0,CVS_W,CVS_H);
   }
 }
 
-// ── Layer 2: Terrain colored hexes (disabled — map image provides art) ────────
-function drawTerrainLayer() {
-  for (let r = 0; r < GRID_H; r++) {
-    for (let c = 0; c < GRID_W; c++) {
-      const t = TERRAIN_MAP[r][c];
-      const {x, y} = hexToPixel(c, r);
-      const fill = mapReady ? T_COLOR_OVERLAY[t] : T_COLOR_SOLID[t];
-      drawHex(ctx, x, y, null, 'rgba(255,255,255,0.55)', 1.4);
-    }
-  }
-}
-
-// ── Layer 3: Highlights ───────────────────────────────────────────────────────
 function drawHighlights() {
-  // Other units' planned paths (blue tint)
   for (const [unitId, path] of plannedMoves) {
     if (unitId === selUnitId) continue;
-    drawPathTrail(path,
-      'rgba(100,180,255,0.18)', 'rgba(100,180,255,0.55)',
-      'rgba(100,180,255,0.35)', 'rgba(100,180,255,0.85)');
+    drawPathTrail(path,'rgba(100,180,255,0.18)','rgba(100,180,255,0.55)','rgba(100,180,255,0.35)','rgba(100,180,255,0.85)');
   }
-  // Active path (yellow)
   if (selUnitId !== null && activePath.length > 1) {
-    drawPathTrail(activePath,
-      'rgba(255,220,0,0.20)', 'rgba(255,220,0,0.65)',
-      'rgba(255,220,0,0.40)', 'rgba(255,220,0,0.95)');
+    drawPathTrail(activePath,'rgba(255,220,0,0.20)','rgba(255,220,0,0.65)','rgba(255,220,0,0.40)','rgba(255,220,0,0.95)');
   }
-  // Valid next steps (green)
   for (const h of moveHexes) {
-    const {x, y} = hexToPixel(h.col, h.row);
-    drawHex(ctx, x, y, 'rgba(0,230,118,0.22)', 'rgba(0,230,118,0.70)', 1.8);
+    const {x,y}=hexToPixel(h.col,h.row);
+    drawHex(ctx,x,y,'rgba(0,230,118,0.22)','rgba(0,230,118,0.70)',1.8);
   }
-  // Attack hexes (red)
   for (const h of atkHexes) {
-    const {x, y} = hexToPixel(h.col, h.row);
-    const declared = pendingAtks.some(a => a.targetId === h.unitId);
-    drawHex(ctx, x, y,
-      declared ? 'rgba(255,60,60,0.50)'  : 'rgba(255,60,60,0.22)',
-      declared ? 'rgba(255,120,120,1.0)' : 'rgba(255,80,80,0.75)', 2.0);
+    const {x,y}=hexToPixel(h.col,h.row);
+    const declared=pendingAtks.some(a=>a.targetId===h.unitId);
+    drawHex(ctx,x,y,
+      declared?'rgba(255,60,60,0.50)':'rgba(255,60,60,0.22)',
+      declared?'rgba(255,120,120,1.0)':'rgba(255,80,80,0.75)',2.0);
   }
-}
-
-// Draw a step-numbered path trail (skips index 0 = starting hex)
-function drawPathTrail(path, fillMid, strokeMid, fillLast, strokeLast) {
-  for (let i = 1; i < path.length; i++) {
-    const {col, row} = path[i];
-    const {x, y}     = hexToPixel(col, row);
-    const isLast     = i === path.length - 1;
-    drawHex(ctx, x, y,
-      isLast ? fillLast  : fillMid,
-      isLast ? strokeLast : strokeMid,
-      isLast ? 2.2 : 1.6);
-    ctx.save();
-    ctx.fillStyle    = 'rgba(255,255,255,0.92)';
-    ctx.font         = `bold ${Math.round(HEX_R * 0.30)}px sans-serif`;
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.shadowColor  = 'rgba(0,0,0,0.8)';
-    ctx.shadowBlur   = 3;
-    ctx.fillText(String(i), x, y);
-    ctx.restore();
-  }
-}
-
-// ── Layer 4: Hex grid ─────────────────────────────────────────────────────────
-function drawGrid() {
-  for (let r = 0; r < GRID_H; r++) {
-    for (let c = 0; c < GRID_W; c++) {
-      const t = TERRAIN_MAP[r][c];
-      const {x, y} = hexToPixel(c, r);
-      drawHex(ctx, x, y, null, T_BORDER[t], 0.8);
+  // Destacar unidade selecionada para reposicionamento (facilitador)
+  if (myRole === 'facilitator' && facRepoUnitId) {
+    const repoUnit = gameState?.units.find(u => u.id === facRepoUnitId && u.hp > 0);
+    if (repoUnit) {
+      const {x,y} = hexToPixel(repoUnit.col, repoUnit.row);
+      drawHex(ctx,x,y,'rgba(255,200,0,0.30)','rgba(255,200,0,1.0)',3.0);
     }
   }
 }
 
-// ── Layer 5: Infrastructure ───────────────────────────────────────────────────
-const INFRA_COLORS = { naval:'#82b1ff', port:'#80cbc4', aero:'#b0bec5', oil:'#ffcc02' };
-
-function drawInfrastructure() {
-  for (const inf of INFRA) {
-    const {x, y} = hexToPixel(inf.col, inf.row);
-    const col = INFRA_COLORS[inf.type] || '#fff';
-    ctx.shadowColor = 'rgba(0,0,0,0.8)';
-    ctx.shadowBlur  = 4;
-    ctx.fillStyle   = col;
-    ctx.font        = `bold ${Math.round(HEX_R * 0.38)}px sans-serif`;
-    ctx.textAlign   = 'center';
-    ctx.textBaseline= 'middle';
-    ctx.fillText(inf.label, x, y - HEX_R * 0.1);
-    ctx.shadowBlur  = 0;
-    ctx.fillStyle   = 'rgba(255,255,200,0.7)';
-    ctx.font        = `${Math.round(HEX_R * 0.2)}px 'Courier New', monospace`;
-    ctx.fillText(inf.name, x, y + HEX_R * 0.38);
+function drawPathTrail(path, fillMid, strokeMid, fillLast, strokeLast) {
+  for (let i = 1; i < path.length; i++) {
+    const {col,row}=path[i];
+    const {x,y}=hexToPixel(col,row);
+    const isLast=i===path.length-1;
+    drawHex(ctx,x,y,isLast?fillLast:fillMid,isLast?strokeLast:strokeMid,isLast?2.2:1.6);
+    ctx.save();
+    ctx.fillStyle='rgba(255,255,255,0.92)';
+    ctx.font=`bold ${Math.round(HEX_R*0.30)}px sans-serif`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.shadowColor='rgba(0,0,0,0.8)'; ctx.shadowBlur=3;
+    ctx.fillText(String(i),x,y);
+    ctx.restore();
   }
 }
 
-// ── Layer 6: Units ────────────────────────────────────────────────────────────
+function drawGrid() {
+  for (let r=0;r<GRID_H;r++) for (let c=0;c<GRID_W;c++) {
+    const t=TERRAIN_MAP[r][c];
+    const {x,y}=hexToPixel(c,r);
+    drawHex(ctx,x,y,null,T_BORDER[t],0.8);
+  }
+}
+
+const INFRA_COLORS={naval:'#82b1ff',port:'#80cbc4',aero:'#b0bec5',oil:'#ffcc02'};
+function drawInfrastructure() {
+  for (const inf of INFRA) {
+    const {x,y}=hexToPixel(inf.col,inf.row);
+    const col=INFRA_COLORS[inf.type]||'#fff';
+    ctx.shadowColor='rgba(0,0,0,0.8)'; ctx.shadowBlur=4;
+    ctx.fillStyle=col;
+    ctx.font=`bold ${Math.round(HEX_R*0.38)}px sans-serif`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(inf.label,x,y-HEX_R*0.1);
+    ctx.shadowBlur=0;
+    ctx.fillStyle='rgba(255,255,200,0.7)';
+    ctx.font=`${Math.round(HEX_R*0.2)}px 'Courier New',monospace`;
+    ctx.fillText(inf.name,x,y+HEX_R*0.38);
+  }
+}
+
 function drawUnits() {
   if (!gameState) return;
-
-  // Ghost units at planned destinations (semi-transparent)
-  for (const [unitId, path] of plannedMoves) {
-    if (path.length <= 1) continue;
-    const unit = gameState.units.find(u => u.id === unitId && u.hp > 0);
+  // Ghost destinations
+  for (const [unitId,path] of plannedMoves) {
+    if (path.length<=1) continue;
+    const unit=gameState.units.find(u=>u.id===unitId&&u.hp>0);
     if (!unit) continue;
-    const dest = path[path.length - 1];
-    const {x, y} = hexToPixel(dest.col, dest.row);
-    ctx.save();
-    ctx.globalAlpha = 0.35;
-    ctx.beginPath();
-    ctx.arc(x, y, HEX_R * 0.58, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.fill();
-    drawUnitCounter(ctx, unit, x, y, false);
+    const dest=path[path.length-1];
+    const {x,y}=hexToPixel(dest.col,dest.row);
+    ctx.save(); ctx.globalAlpha=0.35;
+    ctx.beginPath(); ctx.arc(x,y,HEX_R*0.58,0,Math.PI*2); ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fill();
+    drawUnitCounter(ctx,unit,x,y,false);
     ctx.restore();
   }
-  // Ghost for the currently-being-traced path (if not yet saved)
-  if (selUnitId !== null && activePath.length > 1) {
-    const unit = gameState.units.find(u => u.id === selUnitId && u.hp > 0);
+  if (selUnitId!==null&&activePath.length>1) {
+    const unit=gameState.units.find(u=>u.id===selUnitId&&u.hp>0);
     if (unit) {
-      const dest = activePath[activePath.length - 1];
-      const {x, y} = hexToPixel(dest.col, dest.row);
-      ctx.save();
-      ctx.globalAlpha = 0.40;
-      ctx.beginPath();
-      ctx.arc(x, y, HEX_R * 0.58, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.fill();
-      drawUnitCounter(ctx, unit, x, y, false);
+      const dest=activePath[activePath.length-1];
+      const {x,y}=hexToPixel(dest.col,dest.row);
+      ctx.save(); ctx.globalAlpha=0.40;
+      ctx.beginPath(); ctx.arc(x,y,HEX_R*0.58,0,Math.PI*2); ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fill();
+      drawUnitCounter(ctx,unit,x,y,false);
       ctx.restore();
     }
   }
-
-  // Actual units at current (server-confirmed) positions
+  // Actual units
   for (const u of gameState.units) {
-    if (u.hp <= 0) continue;
-    const {x, y} = hexToPixel(u.col, u.row);
-    ctx.beginPath();
-    ctx.arc(x, y, HEX_R * 0.58, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.fill();
-    const isSelected = u.id === selUnitId || selGroupIds.includes(u.id);
-    drawUnitCounter(ctx, u, x, y, isSelected);
+    if (u.hp<=0) continue;
+    const {x,y}=hexToPixel(u.col,u.row);
+    ctx.beginPath(); ctx.arc(x,y,HEX_R*0.58,0,Math.PI*2); ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fill();
+    const isSelected=u.id===selUnitId||selGroupIds.includes(u.id);
+    drawUnitCounter(ctx,u,x,y,isSelected);
   }
-
-  // Stack count badges (shown on hexes with 2+ alive units)
-  const hexStacks = {};
+  // Stack badges
+  const hexStacks={};
   for (const u of gameState.units) {
-    if (u.hp <= 0) continue;
-    const k = `${u.col},${u.row}`;
-    if (!hexStacks[k]) hexStacks[k] = {col: u.col, row: u.row, count: 0};
+    if (u.hp<=0) continue;
+    const k=`${u.col},${u.row}`;
+    if (!hexStacks[k]) hexStacks[k]={col:u.col,row:u.row,count:0};
     hexStacks[k].count++;
   }
-  for (const {col, row, count} of Object.values(hexStacks)) {
-    if (count < 2) continue;
-    const {x, y} = hexToPixel(col, row);
-    const r  = HEX_R * 0.22;
-    const bx = x + HEX_R * 0.38;
-    const by = y - HEX_R * 0.38;
-    ctx.beginPath();
-    ctx.arc(bx, by, r, 0, Math.PI * 2);
-    ctx.fillStyle   = 'rgba(255,200,0,0.92)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-    ctx.lineWidth   = 1;
-    ctx.stroke();
-    ctx.fillStyle   = '#000';
-    ctx.font        = `bold ${Math.round(r * 1.3)}px sans-serif`;
-    ctx.textAlign   = 'center';
-    ctx.textBaseline= 'middle';
-    ctx.fillText(String(count), bx, by);
+  for (const {col,row,count} of Object.values(hexStacks)) {
+    if (count<2) continue;
+    const {x,y}=hexToPixel(col,row);
+    const r=HEX_R*0.22,bx=x+HEX_R*0.38,by=y-HEX_R*0.38;
+    ctx.beginPath(); ctx.arc(bx,by,r,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,200,0,0.92)'; ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.6)'; ctx.lineWidth=1; ctx.stroke();
+    ctx.fillStyle='#000';
+    ctx.font=`bold ${Math.round(r*1.3)}px sans-serif`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(String(count),bx,by);
   }
 }
 
-// ── Layer 7: Coordinate labels ────────────────────────────────────────────────
 function drawCoordLabels() {
-  ctx.shadowColor = 'rgba(0,0,0,0.8)';
-  ctx.shadowBlur  = 3;
-  const fs        = Math.round(HEX_R * 0.27);
-  ctx.fillStyle   = 'rgba(200,220,240,0.55)';
-  ctx.font        = `${fs}px 'Courier New', monospace`;
-
-  ctx.textAlign    = 'center';
-  ctx.textBaseline = 'top';
-  for (let c = 0; c < GRID_W; c++) {
-    const {x} = hexToPixel(c, 0);
-    ctx.fillText(hexLabel(c), x, OY / 2 - 6);
-  }
-  ctx.textAlign    = 'right';
-  ctx.textBaseline = 'middle';
-  for (let r = 0; r < GRID_H; r++) {
-    const {y} = hexToPixel(0, r);
-    ctx.fillText(r + 1, OX - 6, y);
-  }
-  ctx.shadowBlur = 0;
+  ctx.shadowColor='rgba(0,0,0,0.8)'; ctx.shadowBlur=3;
+  const fs=Math.round(HEX_R*0.27);
+  ctx.fillStyle='rgba(200,220,240,0.55)';
+  ctx.font=`${fs}px 'Courier New',monospace`;
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  for (let c=0;c<GRID_W;c++){const {x}=hexToPixel(c,0);ctx.fillText(hexLabel(c),x,OY/2-6);}
+  ctx.textAlign='right'; ctx.textBaseline='middle';
+  for (let r=0;r<GRID_H;r++){const {y}=hexToPixel(0,r);ctx.fillText(r+1,OX-6,y);}
+  ctx.shadowBlur=0;
 }
 
-// ── Layer 8: Hover ────────────────────────────────────────────────────────────
 function drawHover() {
-  const {col, row} = hoverHex;
-  if (col < 0 || col >= GRID_W || row < 0 || row >= GRID_H) return;
-  const {x, y} = hexToPixel(col, row);
-  drawHex(ctx, x, y, 'rgba(255,255,255,0.08)', 'rgba(255,255,255,0.35)', 1.2);
+  const {col,row}=hoverHex;
+  if (col<0||col>=GRID_W||row<0||row>=GRID_H) return;
+  const {x,y}=hexToPixel(col,row);
+  drawHex(ctx,x,y,'rgba(255,255,255,0.08)','rgba(255,255,255,0.35)',1.2);
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 function flashError(msg) {
-  const el = $('error-flash');
-  el.textContent = msg;
-  el.classList.remove('hidden');
+  const el=$('error-flash');
+  el.textContent=msg; el.classList.remove('hidden');
   clearTimeout(flashError._t);
-  flashError._t = setTimeout(() => el.classList.add('hidden'), 3500);
+  flashError._t=setTimeout(()=>el.classList.add('hidden'),3500);
 }
 function showLobbyErr(msg) {
-  lobbyErr.textContent = msg;
-  lobbyErr.classList.remove('hidden');
-  setTimeout(() => lobbyErr.classList.add('hidden'), 4000);
+  const lobbyErr=$('lobby-err');
+  lobbyErr.textContent=msg; lobbyErr.classList.remove('hidden');
+  setTimeout(()=>lobbyErr.classList.add('hidden'),4000);
 }
 
 // ─── Battle Round Panel ───────────────────────────────────────────────────────
-let brDecisionMade = false;
-let brQueue = [];  // buffer for back-to-back mustDecide:false events
+let brDecisionMade=false, brQueue=[];
 
 function closeBrPanel() {
   $('br-panel').classList.add('hidden');
-  brDecisionMade = false;
-  brQueue = [];
+  brDecisionMade=false; brQueue=[];
 }
-
-// Advance to next queued result, or close the panel when the queue is empty
 function onBrOk() {
-  if (brQueue.length > 0) {
-    renderBrPanel(brQueue.shift());
-  } else {
-    closeBrPanel();
-  }
+  if (brQueue.length>0) renderBrPanel(brQueue.shift());
+  else closeBrPanel();
 }
-
-// Enqueue result; show immediately if panel is hidden or in "waiting" state
 function handleBrResult(data) {
   brQueue.push(data);
-  const panelHidden = $('br-panel').classList.contains('hidden');
-  const isWaiting   = !$('br-waiting').classList.contains('hidden');
-  if (panelHidden || isWaiting) {
-    renderBrPanel(brQueue.shift());
-  }
+  const panelHidden=$('br-panel').classList.contains('hidden');
+  const isWaiting=!$('br-waiting').classList.contains('hidden');
+  if (panelHidden||isWaiting) renderBrPanel(brQueue.shift());
 }
-
 function sendBrDecision(decision) {
   if (brDecisionMade) return;
-  brDecisionMade = true;
-  socket.emit('battle_round_decision', { decision });
-  // Show waiting state while opponent decides
+  brDecisionMade=true;
+  socket.emit('battle_round_decision',{decision});
   $('br-decision').classList.add('hidden');
   $('br-waiting').classList.remove('hidden');
-  const chosen = decision === 'continue' ? 'Você escolheu CONTINUAR.' : 'Você escolheu PARAR.';
-  $('br-panel-body').insertAdjacentHTML('beforeend',
-    `<div class="br-row br-decision-made">${chosen}</div>`);
+  const chosen=decision==='continue'?'Você escolheu CONTINUAR.':'Você escolheu PARAR.';
+  $('br-panel-body').insertAdjacentHTML('beforeend',`<div class="br-row br-decision-made">${chosen}</div>`);
 }
-
 function buildResultHtml(eng) {
   if (!eng) return '';
-  if (!eng.ok) {
-    return `<div class="br-row br-miss">⚠ ${eng.reason || 'Sem armamento válido.'}</div>`;
-  }
-
-  const aC = eng.attackerId ? '' : '';  // attacker colour resolved server-side per team
-  const intStr = eng.interception?.intercepted > 0
-    ? `<span class="br-int"> [${eng.interception.intercepted} intercept.]</span>` : '';
-  const wpnTag = eng.weaponLabel ? `<span class="br-wpn">[${eng.weaponLabel}]</span> ` : '';
-
-  const rollsDesc = (eng.attackRolls || []).map(r => {
-    if (r.reroll != null) return `d6=${r.roll}→${r.reroll}(${r.damage}SP)`;
-    return `d6=${r.roll}(${r.damage}SP)`;
-  }).join('  ') || '—';
-
-  const advTag = eng.advantage ? '<span class="br-adv"> ★iniciativa</span>' : '';
-
-  let cls, icon, detail;
-  if (eng.destroyed) {
-    cls = 'br-destroyed'; icon = '💥';
-    detail = `−${eng.totalDamage}SP <strong>DESTRUÍDO!</strong>`;
-  } else if (eng.totalDamage > 0) {
-    cls = 'br-hit'; icon = '✓';
-    detail = `−${eng.totalDamage}SP  (restante: ${eng.remainingHp}SP)`;
-  } else {
-    cls = 'br-miss'; icon = '✗';
-    detail = `sem dano  (restante: ${eng.remainingHp}SP)`;
-  }
-
-  return `
-    <div class="br-row ${cls}">
-      ${icon} ${wpnTag}${advTag}
-      <span class="br-launched">Lançados: ${eng.launched}</span>${intStr}
-      <span class="br-impacts"> Impactos: ${eng.effectiveShots}</span>
-      <div class="br-detail">${detail}</div>
-      <div class="br-rolls">${rollsDesc}</div>
-    </div>`;
-}
-
-function renderBrPanel({ engagement, result, mustDecide, decisions, initiativeBonusTeam, counterResult }) {
-  brDecisionMade = false;
-
-  const brLabel = `${engagement.id} · Battle Round ${engagement.battleRound}`;
-  const singleRound = engagement.maxBattleRounds === 1;
-
-  $('br-panel-header').textContent = `── ${brLabel} ──`;
-
-  let html = '';
-
-  // Show attacker/target info
-  const att = gameState?.units.find(u => u.id === engagement.attackerId);
-  const def = gameState?.units.find(u => u.id === engagement.targetId);
-  const attName = att?.name || engagement.attackerId;
-  const defName = def?.name || engagement.targetId;
-  const attCls  = att?.team === 'blue' ? 'cm-blue' : 'cm-red';
-  const defCls  = def?.team === 'blue' ? 'cm-blue' : 'cm-red';
-
-  html += `<div class="br-combatants">
-    <span class="${attCls}">${attName}</span>
-    <span class="br-arrow"> → </span>
-    <span class="${defCls}">${defName}</span>
-    <span class="br-wpn-tag"> [${engagement.weaponType.toUpperCase()}]</span>
+  if (!eng.ok) return `<div class="br-row br-miss">⚠ ${eng.reason||'Sem armamento válido.'}</div>`;
+  const intStr=eng.interception?.intercepted>0?`<span class="br-int"> [${eng.interception.intercepted} intercept.]</span>`:'';
+  const wpnTag=eng.weaponLabel?`<span class="br-wpn">[${eng.weaponLabel}]</span> `:'';
+  const rollsDesc=(eng.attackRolls||[]).map(r=>r.reroll!=null?`d6=${r.roll}→${r.reroll}(${r.damage}SP)`:`d6=${r.roll}(${r.damage}SP)`).join('  ')||'—';
+  const advTag=eng.advantage?'<span class="br-adv"> ★iniciativa</span>':'';
+  let cls,icon,detail;
+  if (eng.destroyed){cls='br-destroyed';icon='💥';detail=`−${eng.totalDamage}SP <strong>DESTRUÍDO!</strong>`;}
+  else if (eng.totalDamage>0){cls='br-hit';icon='✓';detail=`−${eng.totalDamage}SP  (restante: ${eng.remainingHp}SP)`;}
+  else{cls='br-miss';icon='✗';detail=`sem dano  (restante: ${eng.remainingHp}SP)`;}
+  return `<div class="br-row ${cls}">${icon} ${wpnTag}${advTag}
+    <span class="br-launched">Lançados: ${eng.launched}</span>${intStr}
+    <span class="br-impacts"> Impactos: ${eng.effectiveShots}</span>
+    <div class="br-detail">${detail}</div>
+    <div class="br-rolls">${rollsDesc}</div>
   </div>`;
-
-  if (singleRound) {
-    html += `<div class="br-single-label">Arma estratégica — rodada única</div>`;
-  }
-
+}
+function renderBrPanel({engagement,result,mustDecide,decisions,initiativeBonusTeam,counterResult}) {
+  brDecisionMade=false;
+  const brLabel=`${engagement.id} · Battle Round ${engagement.battleRound}`;
+  const singleRound=engagement.maxBattleRounds===1;
+  $('br-panel-header').textContent=`── ${brLabel} ──`;
+  let html='';
+  const att=gameState?.units.find(u=>u.id===engagement.attackerId);
+  const def=gameState?.units.find(u=>u.id===engagement.targetId);
+  const attName=att?.name||engagement.attackerId,defName=def?.name||engagement.targetId;
+  const attCls=att?.team==='blue'?'cm-blue':'cm-red';
+  const defCls=def?.team==='blue'?'cm-blue':'cm-red';
+  html+=`<div class="br-combatants"><span class="${attCls}">${attName}</span><span class="br-arrow"> → </span><span class="${defCls}">${defName}</span><span class="br-wpn-tag"> [${engagement.weaponType.toUpperCase()}]</span></div>`;
+  if (singleRound) html+=`<div class="br-single-label">Arma estratégica — rodada única</div>`;
   if (initiativeBonusTeam) {
-    const bonusTeamLabel = initiativeBonusTeam === myTeam ? 'SUA FORÇA' : 'FORÇA ADVERSÁRIA';
-    html += `<div class="br-init-bonus">★ Bônus de iniciativa: ${bonusTeamLabel} (2d6, maior valor)</div>`;
+    const bonusLabel=initiativeBonusTeam===myRole?'SUA FORÇA':'FORÇA ADVERSÁRIA';
+    html+=`<div class="br-init-bonus">★ Bônus de iniciativa: ${bonusLabel} (2d6, maior valor)</div>`;
   }
-
-  // Result block
-  if (result === null && decisions) {
-    const blueDecided = decisions.blue === 'stop' ? 'PAROU' : 'CONTINUOU';
-    const redDecided  = decisions.red  === 'stop' ? 'PAROU' : 'CONTINUOU';
-    html += `<div class="br-row br-decision-summary">
-      Azul: ${blueDecided} · Vermelho: ${redDecided} — combate encerrado.
-    </div>`;
-  } else if (result === null) {
-    html += `<div class="br-row br-miss">⚠ Unidade já destruída — engajamento cancelado.</div>`;
+  if (result===null&&decisions) {
+    html+=`<div class="br-row br-decision-summary">Azul: ${decisions.blue==='stop'?'PAROU':'CONTINUOU'} · Vermelho: ${decisions.red==='stop'?'PAROU':'CONTINUOU'} — combate encerrado.</div>`;
+  } else if (result===null) {
+    html+=`<div class="br-row br-miss">⚠ Unidade já destruída — engajamento cancelado.</div>`;
   } else {
-    html += buildResultHtml(result);
+    html+=buildResultHtml(result);
   }
-
-  // Counter-attack block (BR#2 only)
   if (counterResult) {
-    const cAtt = gameState?.units.find(u => u.id === counterResult.attackerId);
-    const cDef = gameState?.units.find(u => u.id === counterResult.defenderId);
-    const cAttName = cAtt?.name || counterResult.attackerId;
-    const cDefName = cDef?.name || counterResult.defenderId;
-    const cAttCls  = cAtt?.team === 'blue' ? 'cm-blue' : 'cm-red';
-    const cDefCls  = cDef?.team === 'blue' ? 'cm-blue' : 'cm-red';
-
-    html += `<div class="br-counter-header">── Contrataque ──</div>`;
-    html += `<div class="br-combatants">
-      <span class="${cAttCls}">${cAttName}</span>
-      <span class="br-arrow"> ↩ </span>
-      <span class="${cDefCls}">${cDefName}</span>
-      <span class="br-wpn-tag"> [${(counterResult.weaponType || '').toUpperCase()}]</span>
-    </div>`;
+    const cAtt=gameState?.units.find(u=>u.id===counterResult.attackerId);
+    const cDef=gameState?.units.find(u=>u.id===counterResult.defenderId);
+    const cAttName=cAtt?.name||counterResult.attackerId,cDefName=cDef?.name||counterResult.defenderId;
+    const cAttCls=cAtt?.team==='blue'?'cm-blue':'cm-red';
+    const cDefCls=cDef?.team==='blue'?'cm-blue':'cm-red';
+    html+=`<div class="br-counter-header">── Contrataque ──</div>`;
+    html+=`<div class="br-combatants"><span class="${cAttCls}">${cAttName}</span><span class="br-arrow"> ↩ </span><span class="${cDefCls}">${cDefName}</span><span class="br-wpn-tag"> [${(counterResult.weaponType||'').toUpperCase()}]</span></div>`;
     if (counterResult.advantage) {
-      const cBonusLabel = cAtt?.team === myTeam ? 'SUA FORÇA' : 'FORÇA ADVERSÁRIA';
-      html += `<div class="br-init-bonus">★ Bônus de iniciativa: ${cBonusLabel} (2d6, maior valor)</div>`;
+      const cBonusLabel=cAtt?.team===myRole?'SUA FORÇA':'FORÇA ADVERSÁRIA';
+      html+=`<div class="br-init-bonus">★ Bônus de iniciativa: ${cBonusLabel} (2d6, maior valor)</div>`;
     }
-    html += buildResultHtml(counterResult);
+    html+=buildResultHtml(counterResult);
   }
-
-  $('br-panel-body').innerHTML = html;
-
-  // Decision / OK UI
-  const decisionEl = $('br-decision');
-  const waitingEl  = $('br-waiting');
-  const okAreaEl   = $('br-ok-area');
-  decisionEl.classList.add('hidden');
-  waitingEl.classList.add('hidden');
-  okAreaEl.classList.add('hidden');
-
-  if (mustDecide && !singleRound && !result?.destroyed) {
-    decisionEl.classList.remove('hidden');        // show CONTINUAR / PARAR
+  $('br-panel-body').innerHTML=html;
+  $('br-decision').classList.add('hidden');
+  $('br-waiting').classList.add('hidden');
+  $('br-ok-area').classList.add('hidden');
+  if (mustDecide&&!singleRound&&!result?.destroyed&&myRole!=='facilitator') {
+    $('br-decision').classList.remove('hidden');
   } else {
-    const label = brQueue.length > 0 ? 'Próximo ▶' : 'OK ✓';
-    $('br-btn-ok').textContent = label;
-    okAreaEl.classList.remove('hidden');          // show OK / Próximo
+    const label=brQueue.length>0?'Próximo ▶':'OK ✓';
+    $('br-btn-ok').textContent=label;
+    $('br-ok-area').classList.remove('hidden');
   }
-
   $('br-panel').classList.remove('hidden');
 }

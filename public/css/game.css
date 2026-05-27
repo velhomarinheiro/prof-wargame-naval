@@ -594,3 +594,267 @@ input::placeholder { color: #2a4a60; text-transform: none; letter-spacing: 1px; 
   color: var(--dim);
   white-space: nowrap;
 }
+
+/* ═══ FACILITADOR ════════════════════════════════════════════════════════════ */
+
+/* ─── Team badge / color tokens ──────────────────────────────────────────── */
+.team-badge.fac  { background: #3a2800; color: var(--gold-l); border: 1px solid var(--gold); }
+.act-btn.gold    { background: #3a2800; border-color: var(--gold); color: var(--gold-l); }
+.act-btn.gold:hover:not(:disabled) { background: #5a4000; }
+.act-btn.green   { background: #003a18; border-color: var(--green); color: var(--green); }
+.act-btn.green:hover:not(:disabled) { background: #005a28; }
+
+.fac-blue    { color: var(--blue-l); }
+.fac-red     { color: var(--red-l); }
+.fac-neutral { color: #80cbc4; }
+.fac-gold    { color: var(--gold-l) !important; }
+.fac-dim     { color: var(--dim); }
+
+/* ─── Wider fac sidebar ──────────────────────────────────────────────────── */
+.fac-sidebar { width: 310px !important; }
+
+/* ─── Fleet neutral row ──────────────────────────────────────────────────── */
+.fleet-row.neutral { color: #80cbc4; }
+
+/* ─── Lobby: role-select buttons ─────────────────────────────────────────── */
+.join-role-row { margin-bottom: 8px; }
+.join-btns-row { display: flex; gap: 8px; }
+.join-btns-row .act-btn { flex: 1; }
+
+/* ─── Waiting screen ─────────────────────────────────────────────────────── */
+#waiting-screen {
+  position: fixed; inset: 0;
+  background: var(--navy);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50;
+}
+.waiting-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 3rem 3.5rem;
+  text-align: center;
+  min-width: 360px;
+  box-shadow: 0 0 60px rgba(21,101,192,0.2);
+}
+.waiting-box h2 { color: var(--text); font-size: 1rem; letter-spacing: 1px; margin: 0.75rem 0 0.5rem; }
+.waiting-role {
+  font-size: 1.1rem; font-weight: bold; letter-spacing: 3px;
+  padding: 7px 24px; border-radius: 3px;
+  display: inline-block; margin-bottom: 0.5rem;
+}
+.waiting-role.blue { background: var(--blue); color: #fff; border: 1px solid var(--blue-l); }
+.waiting-role.red  { background: var(--red);  color: #fff; border: 1px solid var(--red-l); }
+
+/* ─── Config screen ──────────────────────────────────────────────────────── */
+#config-screen {
+  position: fixed; inset: 0;
+  background: var(--navy);
+  display: flex; flex-direction: column;
+  z-index: 50; overflow: hidden;
+}
+.config-header {
+  display: flex; align-items: center; gap: 1rem;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0; flex-wrap: wrap;
+}
+.config-meta { display: flex; gap: 1rem; align-items: center; margin-left: auto; flex-wrap: wrap; }
+.fac-player-status { display: flex; gap: 12px; font-size: 0.72rem; }
+.fac-player-status span { transition: color 0.3s; }
+
+.config-body {
+  flex: 1; display: flex; overflow: hidden;
+}
+.config-ob-panel {
+  flex: 1; display: flex; flex-direction: column;
+  padding: 14px 16px; overflow: hidden;
+}
+.config-start-panel {
+  width: 230px; flex-shrink: 0;
+  padding: 14px 16px;
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 10px;
+  background: var(--panel);
+}
+.config-section-title {
+  font-size: 0.65rem; letter-spacing: 3px;
+  color: var(--dim); margin-bottom: 10px; text-transform: uppercase;
+}
+.fac-hint { font-size: 0.75rem; color: var(--dim); line-height: 1.5; }
+
+/* ─── OB Tabs ────────────────────────────────────────────────────────────── */
+.fac-tabs { display: flex; gap: 4px; margin-bottom: 8px; flex-shrink: 0; }
+.fac-tab {
+  padding: 6px 16px;
+  font-family: 'Courier New', monospace; font-size: 0.72rem; letter-spacing: 1.5px;
+  border: 1px solid var(--border); background: var(--deep); color: var(--dim);
+  cursor: pointer; text-transform: uppercase; transition: all 0.15s;
+}
+.fac-tab:hover { background: rgba(21,101,192,0.15); color: var(--text); }
+.fac-tab.active                   { background: rgba(21,101,192,0.3);  border-color: var(--blue-l); color: var(--blue-l); }
+.fac-tab.active[data-team="red"]  { background: rgba(183,28,28,0.3);   border-color: var(--red-l);  color: var(--red-l); }
+.fac-tab.active[data-team="neutral"] { background: rgba(128,203,196,0.15); border-color: #80cbc4; color: #80cbc4; }
+
+/* ─── OB Table ───────────────────────────────────────────────────────────── */
+.fac-ob-wrap {
+  flex: 1; overflow-y: auto;
+  border: 1px solid var(--border); margin-bottom: 8px;
+}
+.fac-ob-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 0.73rem; color: var(--dim);
+}
+.fac-ob-table th {
+  position: sticky; top: 0;
+  background: var(--deep); color: var(--text);
+  font-size: 0.62rem; letter-spacing: 1px;
+  padding: 6px 8px; text-align: left;
+  border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.fac-ob-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(80,120,160,0.1);
+  vertical-align: middle;
+}
+.fac-ob-table tr:hover td { background: rgba(21,101,192,0.07); }
+.fac-ob-actions { display: flex; gap: 8px; align-items: center; padding-top: 6px; flex-shrink: 0; }
+
+/* ─── Small buttons ──────────────────────────────────────────────────────── */
+.fac-small-btn,
+.act-btn.fac-small-btn {
+  width: auto !important; padding: 4px 10px;
+  font-size: 0.67rem; letter-spacing: 0.8px;
+}
+.fac-small-btn.red { background: #4a0d0d; border-color: var(--red-l); color: var(--red-l); }
+.fac-small-btn.red:hover { background: var(--red); }
+
+/* ─── Fac inputs ─────────────────────────────────────────────────────────── */
+.fac-input {
+  background: rgba(5,18,35,0.9);
+  border: 1px solid var(--border); color: var(--text);
+  padding: 6px 8px; font-family: 'Courier New', monospace;
+  font-size: 0.78rem; width: 100%;
+}
+.fac-input:focus { outline: none; border-color: var(--blue-l); }
+.fac-input-sm { font-size: 0.72rem; padding: 4px 6px; }
+select.fac-input option { background: #071929; }
+textarea.fac-input { resize: vertical; min-height: 36px; }
+
+/* ─── Unit edit modal ────────────────────────────────────────────────────── */
+.fac-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.88);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 200;
+}
+.fac-modal-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 1.5rem 2rem;
+  width: 560px; max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 0 60px rgba(0,0,0,0.7);
+}
+.fac-modal-title {
+  font-size: 0.72rem; letter-spacing: 3px;
+  color: var(--gold-l); margin-bottom: 1rem; text-align: center;
+}
+.fac-modal-grid {
+  display: grid; grid-template-columns: 170px 1fr;
+  gap: 7px 12px; align-items: center; margin-bottom: 1rem;
+}
+.fac-modal-grid label { font-size: 0.72rem; color: var(--dim); white-space: nowrap; }
+.fac-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* ─── Waiting-approval banner (in game header) ───────────────────────────── */
+.waiting-approval-banner {
+  padding: 3px 14px;
+  background: rgba(80,50,0,0.9);
+  color: var(--gold-l);
+  font-size: 0.7rem; letter-spacing: 2px;
+  border: 1px solid var(--gold);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* ─── Fac header export buttons ──────────────────────────────────────────── */
+.fac-header-btns { display: flex; gap: 6px; margin-left: auto; }
+
+/* ─── Approval panel ─────────────────────────────────────────────────────── */
+.fac-approval-body {
+  font-size: 0.75rem; line-height: 1.6; color: var(--dim);
+  margin-bottom: 8px; max-height: 220px; overflow-y: auto;
+}
+.fac-approval-unit {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 0; border-bottom: 1px solid rgba(80,120,160,0.1);
+  font-size: 0.73rem;
+}
+.fac-approval-unit span { flex: 1; }
+.fac-approve-btn { margin-top: 4px; }
+
+/* HP review (combat approval) */
+.fac-hp-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 0; border-bottom: 1px solid rgba(80,120,160,0.08);
+  font-size: 0.73rem;
+}
+.fac-hp-row.fac-destroyed { opacity: 0.45; }
+.fac-hp-bar-wrap {
+  flex: 1; height: 4px; background: #0a2035; border-radius: 2px; overflow: hidden;
+}
+.fac-hp-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+.fac-hp-input {
+  width: 46px; background: rgba(5,18,35,0.9);
+  border: 1px solid var(--border); color: var(--text);
+  padding: 2px 4px; font-family: 'Courier New', monospace;
+  font-size: 0.72rem; text-align: center;
+}
+
+/* ─── Message panel ──────────────────────────────────────────────────────── */
+.fac-msg-panel { display: flex; flex-direction: column; }
+.fac-msg-compose { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+.fac-msg-log { max-height: 160px; overflow-y: auto; font-size: 0.7rem; }
+.fac-msg-item {
+  padding: 5px 0; border-bottom: 1px solid rgba(80,120,160,0.1);
+}
+.fac-msg-header { color: var(--dim); font-size: 0.65rem; margin-bottom: 2px; }
+.fac-msg-body   { color: var(--text); font-size: 0.73rem; }
+.fac-reply      { color: var(--blue-l); font-size: 0.65rem; margin-top: 2px; padding-left: 8px; }
+
+/* ─── Unit manager ───────────────────────────────────────────────────────── */
+.fac-unit-list { max-height: 200px; overflow-y: auto; font-size: 0.72rem; }
+.fac-unit-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 0; border-bottom: 1px solid rgba(80,120,160,0.08);
+}
+.fac-unit-row > span:first-child { flex: 1; }
+.fac-unit-row-btns { display: flex; gap: 3px; }
+
+/* ─── Fac notice ─────────────────────────────────────────────────────────── */
+.fac-notice {
+  font-size: 0.72rem; color: var(--gold-l);
+  min-height: 18px; letter-spacing: 0.5px;
+  transition: opacity 0.3s; word-break: break-word;
+}
+
+/* ─── Player message popup ───────────────────────────────────────────────── */
+.player-msg-box {
+  background: var(--panel);
+  border: 2px solid var(--gold);
+  padding: 1.8rem 2.2rem;
+  min-width: 360px; max-width: 500px;
+  box-shadow: 0 0 80px rgba(201,168,76,0.35);
+}
+.player-msg-header {
+  font-size: 0.75rem; letter-spacing: 3px;
+  color: var(--gold-l); margin-bottom: 0.75rem; text-align: center;
+}
+.player-msg-text {
+  font-size: 0.88rem; color: var(--text); line-height: 1.6;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem; white-space: pre-wrap;
+}
+.player-msg-actions { display: flex; flex-direction: column; gap: 8px; }
+.player-msg-btns { display: flex; gap: 10px; }
+.player-msg-btns .act-btn { flex: 1; }
