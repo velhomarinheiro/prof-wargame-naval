@@ -92,7 +92,6 @@ function stateFor(state,role){
   const night=state.period==='night';
   const{combatQueue:_cq,battleRoundDecisions:_brd,pendingPaths:_pp,pendingBrPayload:_pbp,...stateRest}=state;
 
-  const neutralUnits=state.units.filter(u=>u.team==='neutral'&&u.hp>0);
   const enemyActual=state.units.filter(u=>u.team!==team&&u.team!=='neutral'&&u.hp>0);
   const useSnapshot=(state.phase==='movement'||state.phase==='movement_approval')&&state.movementSnapshot;
   const enemies=useSnapshot
@@ -113,9 +112,18 @@ function stateFor(state,role){
     });
   }).map(e=>({...e,detected:true}));
 
+  // Neutral units also subject to fog-of-war
+  const detectedNeutrals=state.units.filter(u=>u.team==='neutral'&&u.hp>0).filter(neutral=>{
+    return mineForDetection.some(f=>{
+      let range=rangeAgainst(f.detectionRange,neutral.category);
+      if(night&&f.category!=='submarine') range-=2;
+      return range>=1&&hexDist(f.col,f.row,neutral.col,neutral.row)<=range;
+    });
+  }).map(n=>({...n,detected:true}));
+
   return{
     ...stateRest,
-    units:[...mine,...detected,...neutralUnits],
+    units:[...mine,...detected,...detectedNeutrals],
     blueAttacks:team==='blue'?state.blueAttacks:(state.blueAttacks!==null?'✓':null),
     redAttacks: team==='red' ?state.redAttacks :(state.redAttacks !==null?'✓':null),
     isFacilitator:false,
