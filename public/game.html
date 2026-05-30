@@ -190,7 +190,7 @@
     </div>
     <div id="fac-header-btns" class="fac-header-btns hidden">
       <button class="act-btn gray fac-small-btn" onclick="facExportImage()">📷 PNG</button>
-      <button class="act-btn gray fac-small-btn" onclick="facExportLogFile()">📄 LOG</button>
+      <button class="act-btn red  fac-small-btn" onclick="facEndGame()">🚩 Encerrar Jogo</button>
     </div>
   </header>
 
@@ -275,7 +275,27 @@
       <div class="panel">
         <div class="panel-title">GESTÃO DE UNIDADES</div>
         <div id="fac-unit-list" class="fac-unit-list"></div>
-        <button class="act-btn gray fac-small-btn" style="margin-top:6px" onclick="facAddNewUnit()">+ Nova Unidade</button>
+        <div class="fac-add-unit-form">
+          <select id="fac-new-unit-type" class="fac-input fac-input-sm" style="width:100%"></select>
+          <div class="fac-add-unit-row">
+            <input id="fac-new-unit-name" type="text" class="fac-input fac-input-sm" placeholder="Nome da unidade...">
+            <select id="fac-new-unit-team" class="fac-input fac-input-sm">
+              <option value="neutral">Neutro</option>
+              <option value="blue">Azul</option>
+              <option value="red">Vermelho</option>
+            </select>
+          </div>
+          <button class="act-btn gray fac-small-btn" style="width:100%" onclick="facAddNewUnit()">+ Adicionar ao Jogo</button>
+        </div>
+      </div>
+
+      <!-- Registro do jogo -->
+      <div class="panel">
+        <div class="panel-title fac-log-title">
+          REGISTRO DO JOGO
+          <button class="act-btn gray fac-small-btn" onclick="facExportLogFile()">⬇ Exportar</button>
+        </div>
+        <div id="fac-log-el" class="fac-log-el"></div>
       </div>
 
       <!-- Mensagens -->
@@ -318,6 +338,12 @@
     <div id="br-waiting" class="br-waiting hidden">⌛ Aguardando decisão do adversário...</div>
     <div id="br-ok-area" class="br-ok-area hidden">
       <button id="br-btn-ok" class="act-btn blue">OK — Próximo ▶</button>
+    </div>
+    <!-- Facilitador: área de aprovação de BR -->
+    <div id="br-fac-area" class="br-fac-area hidden">
+      <div class="br-fac-title">── Ajustes do Facilitador (opcional) ──</div>
+      <div id="br-fac-hp-changes" class="br-fac-hp"></div>
+      <button class="act-btn gold" onclick="facApproveBr()">✔ Liberar Resultado para os Jogadores</button>
     </div>
   </div>
 </div>

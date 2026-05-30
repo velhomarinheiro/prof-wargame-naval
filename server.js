@@ -76,22 +76,30 @@ function saveMovementSnapshot(state){
   for(const u of state.units) state.movementSnapshot[u.id]={col:u.col,row:u.row};
 }
 
+function filterLogForPlayer(log,team){
+  const opp=team==='blue'?'red':'blue';
+  const movePat=new RegExp(`\\(${opp}\\)\\s+→`);
+  const fuelPat=new RegExp(`^[⛽✈].*\\(${opp}\\)`);
+  return (log||[]).filter(line=>!movePat.test(line)&&!fuelPat.test(line));
+}
+
 function stateFor(state,role){
   if(role==='facilitator'){
-    const{combatQueue:_cq,battleRoundDecisions:_brd,...rest}=state;
+    const{combatQueue:_cq,battleRoundDecisions:_brd,pendingBrPayload:_pbp,...rest}=state;
     return{...rest,isFacilitator:true};
   }
   const team=role;
   const night=state.period==='night';
-  const{combatQueue:_cq,battleRoundDecisions:_brd,...stateRest}=state;
+  const{combatQueue:_cq,battleRoundDecisions:_brd,pendingPaths:_pp,pendingBrPayload:_pbp,...stateRest}=state;
 
   const neutralUnits=state.units.filter(u=>u.team==='neutral'&&u.hp>0);
   const enemyActual=state.units.filter(u=>u.team!==team&&u.team!=='neutral'&&u.hp>0);
-  const enemies=(state.phase==='movement'&&state.movementSnapshot)
+  const useSnapshot=(state.phase==='movement'||state.phase==='movement_approval')&&state.movementSnapshot;
+  const enemies=useSnapshot
     ?enemyActual.map(u=>{const snap=state.movementSnapshot[u.id];return snap?{...u,col:snap.col,row:snap.row}:u;})
     :enemyActual;
   const mine=state.units.filter(u=>u.team===team&&u.hp>0);
-  const mineForDetection=(state.phase==='movement'&&state.movementSnapshot)
+  const mineForDetection=useSnapshot
     ?mine.map(u=>{const snap=state.movementSnapshot[u.id];return snap?{...u,col:snap.col,row:snap.row}:u;})
     :mine;
 
@@ -111,6 +119,7 @@ function stateFor(state,role){
     blueAttacks:team==='blue'?state.blueAttacks:(state.blueAttacks!==null?'✓':null),
     redAttacks: team==='red' ?state.redAttacks :(state.redAttacks !==null?'✓':null),
     isFacilitator:false,
+    log:filterLogForPlayer(stateRest.log,team),
   };
 }
 
@@ -176,6 +185,8 @@ function newGame(customOB){
     messages:[],
     winner:null,
     movementSnapshot:{},
+    pendingPaths:{},
+    pendingBrPayload:null,
     combatQueue:[],currentEngagementIndex:0,
     battleRoundDecisions:{blue:null,red:null},
   };
@@ -232,11 +243,26 @@ function resolveBattleRound(state,engagement,initiativeBonusTeam=null){
   return eng;
 }
 
-function emitBrResult(room,engagement,result,mustDecide,extra={}){
+function queueBrForFacilitator(room,engagement,result,mustDecide,extra={}){
   const payload={engagement,result,mustDecide,...extra};
+  const afterApprove=mustDecide?'wait_decisions':'no_more_decisions';
+  if(!room.players.facilitator){
+    releaseBrToPlayers(room,payload,afterApprove);
+    return;
+  }
+  room.state.pendingBrPayload={payload,afterApprove};
+  io.to(room.players.facilitator).emit('br_result_pending',payload);
+}
+
+function releaseBrToPlayers(room,payload,afterApprove){
   if(room.players.blue) io.to(room.players.blue).emit('battle_round_result',payload);
   if(room.players.red)  io.to(room.players.red ).emit('battle_round_result',payload);
   if(room.players.facilitator) io.to(room.players.facilitator).emit('battle_round_result',payload);
+  if(afterApprove==='no_more_decisions'){
+    finishCurrentEngagement(room);
+  }else{
+    room.state.battleRoundDecisions={blue:null,red:null};
+  }
 }
 
 function startCurrentEngagement(room){
@@ -245,10 +271,9 @@ function startCurrentEngagement(room){
   engagement.battleRound=1;
   const result=resolveBattleRound(state,engagement);
   if(!result||!result.ok||engagement.maxBattleRounds===1||result.destroyed){
-    emitBrResult(room,engagement,result,false);finishCurrentEngagement(room);return;
+    queueBrForFacilitator(room,engagement,result,false);return;
   }
-  state.battleRoundDecisions={blue:null,red:null};
-  emitBrResult(room,engagement,result,true);
+  queueBrForFacilitator(room,engagement,result,true);
 }
 
 function resolveCounterAttack(state,engagement,blue,red){
@@ -275,15 +300,14 @@ function processBattleRoundDecision(room){
   const{blue,red}=state.battleRoundDecisions;
   const bothStop=blue==='stop'&&red==='stop';
   const maxReached=engagement.battleRound>=engagement.maxBattleRounds;
-  if(bothStop||maxReached){emitBrResult(room,engagement,null,false,{decisions:{blue,red}});finishCurrentEngagement(room);return;}
+  if(bothStop||maxReached){queueBrForFacilitator(room,engagement,null,false,{decisions:{blue,red}});return;}
   let initiativeBonusTeam=null;
   if(blue==='continue'&&red==='stop') initiativeBonusTeam='blue';
   if(red==='continue'&&blue==='stop') initiativeBonusTeam='red';
   engagement.battleRound=2;
   const result=resolveBattleRound(state,engagement,initiativeBonusTeam);
   const counterResult=resolveCounterAttack(state,engagement,blue,red);
-  emitBrResult(room,engagement,result,false,{decisions:{blue,red},initiativeBonusTeam,counterResult});
-  finishCurrentEngagement(room);
+  queueBrForFacilitator(room,engagement,result,false,{decisions:{blue,red},initiativeBonusTeam,counterResult});
 }
 
 function finishCurrentEngagement(room){
@@ -487,12 +511,14 @@ io.on('connection',socket=>{
     }
 
     // Apply
+    const pp=state.pendingPaths=state.pendingPaths||{};
     for(const{unitId,path}of(moves||[])){
       if(!Array.isArray(path)||path.length<2) continue;
       const unit=state.units.find(u=>u.id===unitId&&u.team===team&&u.hp>0);
       if(!unit) continue;
       const dest=path[path.length-1];
       unit.col=dest.col;unit.row=dest.row;unit.moved=true;
+      pp[unitId]=path;
       state.log.unshift(`${unit.name}(${team}) → ${String.fromCharCode(65+dest.col)}${dest.row+1}`);
       const dist=path.length-1;
       if(unit.category!=='air'){spendNavalFuel(unit,navalMoveCost(dist));}
@@ -553,6 +579,7 @@ io.on('connection',socket=>{
       }
     }
 
+    state.pendingPaths={};
     state.phase='combat';
     state.log.unshift('Movimentos aprovados. Fase de Combate iniciada. Declare seus ataques.');
     broadcast(room);
@@ -699,6 +726,34 @@ io.on('connection',socket=>{
     unit.col=col;unit.row=row;
     room.state.log.unshift(`📍 Facilitador moveu ${unit.name} → ${String.fromCharCode(65+col)}${row+1}`);
     broadcast(room);
+  });
+
+  // ── Facilitador aprova resultado de batalha ───────────────────────────────
+  socket.on('facilitator_approve_br',({hpAdjustments})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state||socket.data.role!=='facilitator') return;
+    const{state}=room;
+    if(!state.pendingBrPayload) return;
+    for(const{unitId,hp}of(hpAdjustments||[])){
+      const unit=state.units.find(u=>u.id===unitId);
+      if(!unit) continue;
+      const oldHp=unit.hp;
+      unit.hp=Math.max(0,Math.min(unit.maxHp,Number(hp)||0));
+      if(unit.hp!==oldHp) state.log.unshift(`📝 Facilitador ajustou SP de ${unit.name}: ${oldHp}→${unit.hp}`);
+    }
+    const{payload,afterApprove}=state.pendingBrPayload;
+    state.pendingBrPayload=null;
+    releaseBrToPlayers(room,payload,afterApprove);
+  });
+
+  // ── Facilitador encerra o jogo ────────────────────────────────────────────
+  socket.on('facilitator_end_game',()=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state||socket.data.role!=='facilitator') return;
+    const{state}=room;
+    state.winner='draw';
+    state.log.unshift('🚩 Facilitador encerrou a partida.');
+    broadcast(room,'game_over');
   });
 
   // ── Restart ───────────────────────────────────────────────────────────────

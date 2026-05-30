@@ -314,15 +314,25 @@ function facRenderUnitManager(state) {
   el.innerHTML = alive.map(u => {
     const tc  = u.team === 'blue' ? 'fac-blue' : u.team === 'red' ? 'fac-red' : 'fac-neutral';
     const pos = `${String.fromCharCode(65+u.col)}${u.row+1}`;
+    const moveBtn = u.team === 'neutral'
+      ? `<button class="fac-small-btn" onclick="facSelectRepoUnit('${u.id}')">📍</button>`
+      : '';
     return `<div class="fac-unit-row">
       <span class="${tc}">${u.name}</span>
       <span class="fac-dim">SP:${u.hp}/${u.maxHp} ${pos}</span>
       <div class="fac-unit-row-btns">
+        ${moveBtn}
         <button class="fac-small-btn" onclick="facQuickEditUnit('${u.id}','${u.name}',${u.hp},${u.maxHp})">✏</button>
         <button class="fac-small-btn red" onclick="facRemoveUnit('${u.id}','${u.name}')">✕</button>
       </div>
     </div>`;
   }).join('');
+}
+
+function facRenderLog(state) {
+  const el = document.getElementById('fac-log-el');
+  if (!el || !state) return;
+  el.innerHTML = (state.log || []).map(l => `<p>${escHtml(l)}</p>`).join('');
 }
 
 function facQuickEditUnit(unitId, name, hp, maxHp) {
@@ -337,23 +347,72 @@ function facRemoveUnit(unitId, name) {
   socket.emit('facilitator_manage_unit', { action: 'remove', unitId });
 }
 
+function facRefreshUnitTypeSelect() {
+  const sel = document.getElementById('fac-new-unit-type');
+  if (!sel || !facOB) return;
+  const allSpecs = [
+    ...(facOB.forces.blue    || []).map(s => ({...s, _label:`[AZL] ${s.name}`})),
+    ...(facOB.forces.red     || []).map(s => ({...s, _label:`[VRM] ${s.name}`})),
+    ...(facOB.forces.neutral || []).map(s => ({...s, _label:`[NEU] ${s.name}`})),
+  ];
+  sel.innerHTML = '<option value="">— Tipo de Unidade —</option>' +
+    allSpecs.map(s => `<option value="${s.id}">${escHtml(s._label)} (${s.category})</option>`).join('');
+}
+
 function facAddNewUnit() {
-  const team = prompt('Equipe (blue / red / neutral):', 'neutral');
-  if (!['blue','red','neutral'].includes(team)) { alert('Equipe inválida.'); return; }
-  const name = prompt('Nome da unidade:', 'Nova Unidade');
-  if (!name) return;
-  const cat  = prompt('Categoria (surface/submarine/air/land):', 'surface');
-  const col  = Number(prompt('Coluna (0–15):', '8'));
-  const row  = Number(prompt('Linha (0–9):',   '5'));
-  const sp   = Number(prompt('SP (Staying Power):', '2'));
-  const mov  = Number(prompt('Movimento:', '2'));
+  if (!facOB) return;
+  const typeEl = document.getElementById('fac-new-unit-type');
+  const nameEl = document.getElementById('fac-new-unit-name');
+  const teamEl = document.getElementById('fac-new-unit-team');
+  if (!typeEl || !nameEl || !teamEl) return;
+
+  const typeId = typeEl.value;
+  const name   = nameEl.value.trim();
+  const team   = teamEl.value;
+
+  if (!typeId) { showFacNotice('Selecione um tipo de unidade.'); return; }
+  if (!name)   { showFacNotice('Informe um nome para a unidade.'); return; }
+
+  const allSpecs = [
+    ...(facOB.forces.blue    || []),
+    ...(facOB.forces.red     || []),
+    ...(facOB.forces.neutral || []),
+  ];
+  const template = allSpecs.find(s => s.id === typeId);
+  if (!template) return;
+
+  const spec = JSON.parse(JSON.stringify(template));
+  spec.name  = name;
+
   socket.emit('facilitator_manage_unit', {
     action: 'add',
-    data: { team, name, category: cat||'surface', stayingPower: sp||2, movement: mov||0, col, row,
-            detectionRange:{surface:0,air:0,submarine:0,land:0},
-            attackRange:{surface:0,air:0,submarine:0,land:0},
-            weapons:{}, capabilities:{}, composition:[] },
+    data: { ...spec, team, col: 8, row: 5 },
   });
+
+  nameEl.value = '';
+  showFacNotice(`${name} adicionado(a) ao jogo.`);
+}
+
+// ─── ENCERRAR JOGO ────────────────────────────────────────────────────────────
+function facEndGame() {
+  if (!confirm('Encerrar o jogo agora? Isso encerrará a partida para todos os participantes.')) return;
+  socket.emit('facilitator_end_game');
+}
+
+// ─── APROVAÇÃO DE RESULTADO DE BATALHA (FACILITADOR) ─────────────────────────
+function facApproveBr() {
+  const inputs = document.querySelectorAll('#br-fac-hp-changes .fac-hp-input');
+  const hpAdjustments = [];
+  inputs.forEach(inp => {
+    const uid   = inp.dataset.uid;
+    const maxHp = Number(inp.dataset.maxhp);
+    const hp    = Math.max(0, Math.min(maxHp, Number(inp.value)));
+    hpAdjustments.push({ unitId: uid, hp });
+  });
+  socket.emit('facilitator_approve_br', { hpAdjustments });
+  document.getElementById('br-fac-area').classList.add('hidden');
+  // closeBrPanel is defined in client.js — call it
+  if (typeof closeBrPanel === 'function') closeBrPanel();
 }
 
 // ─── EXPORT ───────────────────────────────────────────────────────────────────

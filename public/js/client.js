@@ -150,6 +150,7 @@ socket.on('game_update', state => {
     facUpdatePhaseUI(state.phase);
     facRenderMessages(state.messages || []);
     facRenderUnitManager(state);
+    facRenderLog(state);
   }
 
   // Aprovação de combate: abre painel automaticamente
@@ -166,6 +167,7 @@ socket.on('movement_approval_needed', state => {
   if (myRole === 'facilitator') {
     facShowMovementApproval(state);
     facRenderUnitManager(state);
+    facRenderLog(state);
   }
   updateUI(); render();
 });
@@ -176,6 +178,7 @@ socket.on('combat_approval_needed', state => {
   if (myRole === 'facilitator') {
     facShowCombatApproval(state);
     facRenderUnitManager(state);
+    facRenderLog(state);
   }
   updateUI(); render();
 });
@@ -184,7 +187,10 @@ socket.on('game_over', ({ winner, state }) => {
   if (state) gameState = state;
   if (gameState) gameState.winner = winner;
   updateUI(); render();
-  if (myRole !== 'facilitator') {
+  if (winner === 'draw') {
+    winnerMsg.textContent = '🚩 Jogo encerrado pelo Facilitador.';
+    winnerMsg.className   = 'victory';
+  } else if (myRole !== 'facilitator') {
     const mine = winner === myRole;
     winnerMsg.textContent = mine ? '🏆 VITÓRIA! Sua força prevaleceu.' : '💀 DERROTA. Sua frota foi afundada.';
     winnerMsg.className   = mine ? 'victory' : 'defeat';
@@ -209,6 +215,38 @@ socket.on('action_error', msg => {
 });
 
 socket.on('battle_round_result', data => handleBrResult(data));
+
+// Facilitador: resultado de batalha aguardando aprovação
+socket.on('br_result_pending', data => {
+  if (myRole !== 'facilitator') return;
+  handleBrResult(data);
+  // Replace OK button with fac approval area
+  const okArea  = $('br-ok-area');
+  const facArea = $('br-fac-area');
+  if (okArea)  okArea.classList.add('hidden');
+  if (facArea) {
+    facArea.classList.remove('hidden');
+    const hpEl = $('br-fac-hp-changes');
+    if (hpEl && gameState) {
+      const eng  = data.engagement || {};
+      const seen = new Set();
+      const involved = [eng.attackerId, eng.targetId]
+        .filter(Boolean)
+        .map(id => gameState.units.find(u => u.id === id && u.hp > 0))
+        .filter(u => u && !seen.has(u.id) && seen.add(u.id));
+      hpEl.innerHTML = involved.map(u => {
+        const tc = u.team === 'blue' ? 'cm-blue' : u.team === 'red' ? 'cm-red' : '';
+        return `<div class="fac-hp-row">
+          <span class="${tc}">${u.name}</span>
+          <input class="fac-hp-input" type="number" min="0" max="${u.maxHp}"
+            value="${u.hp}" data-uid="${u.id}" data-maxhp="${u.maxHp}"
+            style="width:46px;margin-left:8px">
+          <span style="font-size:0.68rem;color:var(--dim)"> / ${u.maxHp}</span>
+        </div>`;
+      }).join('');
+    }
+  }
+});
 
 socket.on('fuel_alert', ({ name, type }) => {
   const msg = type === 'air_lost'
@@ -297,6 +335,8 @@ function setupFacilitatorUI() {
   if (sidebar) sidebar.classList.add('fac-sidebar');
   $('fac-panels').classList.remove('hidden');
   $('player-panels').classList.add('hidden');
+  $('fac-header-btns').classList.remove('hidden');
+  facRefreshUnitTypeSelect();
 }
 
 // ─── Game actions (players only) ──────────────────────────────────────────────
@@ -817,6 +857,21 @@ function drawHighlights() {
     drawHex(ctx,x,y,
       declared?'rgba(255,60,60,0.50)':'rgba(255,60,60,0.22)',
       declared?'rgba(255,120,120,1.0)':'rgba(255,80,80,0.75)',2.0);
+  }
+  // Facilitador: trilhas de movimentação durante aprovação
+  if (myRole === 'facilitator' && gameState.phase === 'movement_approval' && gameState.pendingPaths) {
+    for (const [unitId, path] of Object.entries(gameState.pendingPaths)) {
+      if (!Array.isArray(path) || path.length < 2) continue;
+      const unit = gameState.units.find(u => u.id === unitId && u.hp > 0);
+      if (!unit) continue;
+      const isBlue = unit.team === 'blue';
+      drawPathTrail(path,
+        isBlue ? 'rgba(130,177,255,0.18)' : 'rgba(255,138,128,0.18)',
+        isBlue ? 'rgba(130,177,255,0.55)' : 'rgba(255,138,128,0.55)',
+        isBlue ? 'rgba(130,177,255,0.35)' : 'rgba(255,138,128,0.35)',
+        isBlue ? 'rgba(130,177,255,0.85)' : 'rgba(255,138,128,0.85)',
+      );
+    }
   }
   // Destacar unidade selecionada para reposicionamento (facilitador)
   if (myRole === 'facilitator' && facRepoUnitId) {

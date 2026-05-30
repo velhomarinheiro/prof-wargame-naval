@@ -874,3 +874,35 @@ textarea.fac-input { resize: vertical; min-height: 36px; }
 .player-msg-actions { display: flex; flex-direction: column; gap: 8px; }
 .player-msg-btns { display: flex; gap: 10px; }
 .player-msg-btns .act-btn { flex: 1; }
+
+/* ─── Fac: add unit form ─────────────────────────────────────────────────── */
+.fac-add-unit-form { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.fac-add-unit-row  { display: flex; gap: 4px; }
+.fac-add-unit-row .fac-input { flex: 1; }
+.fac-add-unit-row select.fac-input { flex: 0 0 72px; }
+
+/* ─── Fac: game log panel ────────────────────────────────────────────────── */
+.fac-log-title {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.fac-log-el {
+  max-height: 180px; overflow-y: auto;
+  font-size: 0.70rem; color: var(--dim);
+  line-height: 1.55;
+}
+.fac-log-el p { padding: 1px 0; border-bottom: 1px solid rgba(80,120,160,0.06); }
+
+/* ─── BR panel: facilitador approval area ────────────────────────────────── */
+.br-fac-area {
+  border-top: 1px solid rgba(201,168,76,0.3);
+  margin-top: 10px; padding-top: 10px;
+}
+.br-fac-title {
+  font-size: 0.68rem; color: var(--gold); letter-spacing: 1px;
+  margin-bottom: 8px; text-align: center;
+}
+.br-fac-hp { margin-bottom: 8px; }
+.br-fac-hp .fac-hp-row { font-size: 0.72rem; }
+
+/* ─── Fac: neutral unit badge color ──────────────────────────────────────── */
+.fac-neutral { color: #ffd54f; }

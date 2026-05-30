@@ -38,9 +38,10 @@ const UNIT_DEFS = {
 
 // ─── Unit counter ─────────────────────────────────────────────────────────────
 function drawUnitCounter(ctx, unit, cx, cy, selected) {
-  const isBlue = unit.team === 'blue';
-  const bg     = isBlue ? '#0c2d5a' : '#5a0c0c';
-  const border = isBlue ? '#82b1ff' : '#ff8a80';
+  const isBlue    = unit.team === 'blue';
+  const isNeutral = unit.team === 'neutral';
+  const bg     = isNeutral ? '#2a2200' : isBlue ? '#0c2d5a' : '#5a0c0c';
+  const border = isNeutral ? '#ffd54f' : isBlue ? '#82b1ff' : '#ff8a80';
   const R      = HEX_R * 0.50;
   const top    = cy - R * 0.72;
 
