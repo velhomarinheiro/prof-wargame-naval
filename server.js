@@ -729,21 +729,28 @@ io.on('connection',socket=>{
   });
 
   // ── Facilitador aprova resultado de batalha ───────────────────────────────
-  socket.on('facilitator_approve_br',({hpAdjustments})=>{
+  socket.on('facilitator_approve_br',({hpAdjustments,altered})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room?.state||socket.data.role!=='facilitator') return;
     const{state}=room;
     if(!state.pendingBrPayload) return;
+    const adjustedNotes=[];
     for(const{unitId,hp}of(hpAdjustments||[])){
       const unit=state.units.find(u=>u.id===unitId);
       if(!unit) continue;
       const oldHp=unit.hp;
       unit.hp=Math.max(0,Math.min(unit.maxHp,Number(hp)||0));
-      if(unit.hp!==oldHp) state.log.unshift(`📝 Facilitador ajustou SP de ${unit.name}: ${oldHp}→${unit.hp}`);
+      if(unit.hp!==oldHp){
+        state.log.unshift(`📝 Facilitador ajustou SP de ${unit.name}: ${oldHp}→${unit.hp}`);
+        adjustedNotes.push(`${unit.name}: ${oldHp}→${unit.hp}SP`);
+      }
     }
     const{payload,afterApprove}=state.pendingBrPayload;
     state.pendingBrPayload=null;
-    releaseBrToPlayers(room,payload,afterApprove);
+    const finalPayload=(altered&&adjustedNotes.length>0)
+      ?{...payload,facilitatorNote:`📝 Ajuste do Facilitador: ${adjustedNotes.join(', ')}`}
+      :payload;
+    releaseBrToPlayers(room,finalPayload,afterApprove);
   });
 
   // ── Facilitador encerra o jogo ────────────────────────────────────────────

@@ -394,24 +394,42 @@ function facAddNewUnit() {
 }
 
 // ─── ENCERRAR JOGO ────────────────────────────────────────────────────────────
+let _endGameConfirm = false;
 function facEndGame() {
-  if (!confirm('Encerrar o jogo agora? Isso encerrará a partida para todos os participantes.')) return;
+  const btn = document.querySelector('[onclick="facEndGame()"]');
+  if (!_endGameConfirm) {
+    _endGameConfirm = true;
+    if (btn) { btn.textContent = '⚠ Confirmar Encerramento?'; btn.style.background = '#6a0000'; }
+    setTimeout(() => {
+      _endGameConfirm = false;
+      if (btn) { btn.textContent = '🚩 Encerrar Jogo'; btn.style.background = ''; }
+    }, 4000);
+    return;
+  }
+  _endGameConfirm = false;
+  if (btn) { btn.textContent = '🚩 Encerrar Jogo'; btn.style.background = ''; }
   socket.emit('facilitator_end_game');
 }
 
 // ─── APROVAÇÃO DE RESULTADO DE BATALHA (FACILITADOR) ─────────────────────────
-function facApproveBr() {
+function facAcceptBr() {
+  socket.emit('facilitator_approve_br', { hpAdjustments: [], altered: false });
+  document.getElementById('br-fac-area').classList.add('hidden');
+  if (typeof closeBrPanel === 'function') closeBrPanel();
+}
+
+function facAlterBr() {
   const inputs = document.querySelectorAll('#br-fac-hp-changes .fac-hp-input');
   const hpAdjustments = [];
   inputs.forEach(inp => {
-    const uid   = inp.dataset.uid;
-    const maxHp = Number(inp.dataset.maxhp);
-    const hp    = Math.max(0, Math.min(maxHp, Number(inp.value)));
-    hpAdjustments.push({ unitId: uid, hp });
+    const uid    = inp.dataset.uid;
+    const maxHp  = Number(inp.dataset.maxhp);
+    const origHp = Number(inp.dataset.currhp || inp.dataset.maxhp);
+    const hp     = Math.max(0, Math.min(maxHp, Number(inp.value)));
+    hpAdjustments.push({ unitId: uid, hp, origHp, unitName: inp.dataset.name || '' });
   });
-  socket.emit('facilitator_approve_br', { hpAdjustments });
+  socket.emit('facilitator_approve_br', { hpAdjustments, altered: true });
   document.getElementById('br-fac-area').classList.add('hidden');
-  // closeBrPanel is defined in client.js — call it
   if (typeof closeBrPanel === 'function') closeBrPanel();
 }
 

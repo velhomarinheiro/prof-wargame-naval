@@ -341,9 +341,13 @@
     </div>
     <!-- Facilitador: área de aprovação de BR -->
     <div id="br-fac-area" class="br-fac-area hidden">
-      <div class="br-fac-title">── Ajustes do Facilitador (opcional) ──</div>
+      <div class="br-fac-title">── Avaliação do Facilitador ──</div>
+      <div class="br-fac-hp-label">Ajustar SP (opcional):</div>
       <div id="br-fac-hp-changes" class="br-fac-hp"></div>
-      <button class="act-btn gold" onclick="facApproveBr()">✔ Liberar Resultado para os Jogadores</button>
+      <div class="br-fac-btns">
+        <button class="act-btn blue" onclick="facAcceptBr()">✔ Aceitar</button>
+        <button class="act-btn gold" onclick="facAlterBr()">✏ Alterar SP</button>
+      </div>
     </div>
   </div>
 </div>

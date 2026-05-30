@@ -899,10 +899,18 @@ textarea.fac-input { resize: vertical; min-height: 36px; }
 }
 .br-fac-title {
   font-size: 0.68rem; color: var(--gold); letter-spacing: 1px;
-  margin-bottom: 8px; text-align: center;
+  margin-bottom: 6px; text-align: center;
 }
+.br-fac-hp-label { font-size: 0.65rem; color: var(--dim); margin-bottom: 4px; }
 .br-fac-hp { margin-bottom: 8px; }
 .br-fac-hp .fac-hp-row { font-size: 0.72rem; }
+.br-fac-btns { display: flex; gap: 6px; }
+.br-fac-btns .act-btn { flex: 1; font-size: 0.75rem; padding: 8px; }
+.br-fac-note {
+  color: var(--gold-l); font-size: 0.72rem; font-style: italic;
+  border-top: 1px solid rgba(201,168,76,0.2);
+  padding-top: 5px; margin-top: 4px;
+}
 
 /* ─── Fac: neutral unit badge color ──────────────────────────────────────── */
 .fac-neutral { color: #ffd54f; }

@@ -240,6 +240,7 @@ socket.on('br_result_pending', data => {
           <span class="${tc}">${u.name}</span>
           <input class="fac-hp-input" type="number" min="0" max="${u.maxHp}"
             value="${u.hp}" data-uid="${u.id}" data-maxhp="${u.maxHp}"
+            data-currhp="${u.hp}" data-name="${u.name.replace(/"/g,'&quot;')}"
             style="width:46px;margin-left:8px">
           <span style="font-size:0.68rem;color:var(--dim)"> / ${u.maxHp}</span>
         </div>`;
@@ -422,21 +423,13 @@ function handleClick(col, row) {
 
   // Facilitador: reposicionamento de unidade
   if (myRole === 'facilitator') {
-    // Durante aprovação de movimentos: reposicionamento temporário
-    if (gameState.phase === 'movement_approval' && facHandleMapClickForRepo(col, row)) {
-      // Aplica override visual (simulado via reposition)
-      socket.emit('facilitator_reposition', { unitId: facRepoUnitId || '', col, row });
-      return;
-    }
-    // Fora de aprovação: reposicionamento imediato
     if (facRepoUnitId) {
       socket.emit('facilitator_reposition', { unitId: facRepoUnitId, col, row });
       facRepoUnitId = null;
       showFacNotice(`Unidade movida para ${String.fromCharCode(65+col)}${row+1}`);
       return;
     }
-
-    // Facilitador pode selecionar unidade para reposicionar
+    // Selecionar unidade para reposicionar
     const anyUnit = gameState.units.filter(u => u.col === col && u.row === row && u.hp > 0);
     if (anyUnit.length > 0) {
       facRepoUnitId = anyUnit[0].id;
@@ -1055,7 +1048,7 @@ function buildResultHtml(eng) {
     <div class="br-rolls">${rollsDesc}</div>
   </div>`;
 }
-function renderBrPanel({engagement,result,mustDecide,decisions,initiativeBonusTeam,counterResult}) {
+function renderBrPanel({engagement,result,mustDecide,decisions,initiativeBonusTeam,counterResult,facilitatorNote}) {
   brDecisionMade=false;
   const brLabel=`${engagement.id} · Battle Round ${engagement.battleRound}`;
   const singleRound=engagement.maxBattleRounds===1;
@@ -1092,6 +1085,9 @@ function renderBrPanel({engagement,result,mustDecide,decisions,initiativeBonusTe
       html+=`<div class="br-init-bonus">★ Bônus de iniciativa: ${cBonusLabel} (2d6, maior valor)</div>`;
     }
     html+=buildResultHtml(counterResult);
+  }
+  if (facilitatorNote) {
+    html+=`<div class="br-row br-fac-note">${facilitatorNote}</div>`;
   }
   $('br-panel-body').innerHTML=html;
   $('br-decision').classList.add('hidden');
