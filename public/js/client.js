@@ -219,7 +219,9 @@ socket.on('battle_round_result', data => handleBrResult(data));
 // Facilitador: resultado de batalha aguardando aprovação
 socket.on('br_result_pending', data => {
   if (myRole !== 'facilitator') return;
-  handleBrResult(data);
+  // Force-render the new engagement immediately, discarding any stale queued content
+  brQueue = [];
+  renderBrPanel(data);
   // Replace OK button with fac approval area
   const okArea  = $('br-ok-area');
   const facArea = $('br-fac-area');
