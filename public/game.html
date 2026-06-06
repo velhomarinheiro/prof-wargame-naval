@@ -207,6 +207,13 @@
         <div id="sp-list"></div>
         <button id="sp-group-btn" class="act-btn blue sp-group">▶ Grupo (juntos)</button>
       </div>
+      <div id="zoom-controls">
+        <button onclick="zoomOut()" title="Reduzir zoom (−)">−</button>
+        <span id="zoom-label">100%</span>
+        <button onclick="zoomIn()" title="Ampliar zoom (+)">+</button>
+        <button onclick="resetZoom()" title="Resetar (duplo clique)" style="font-size:0.62rem;letter-spacing:0">↺</button>
+      </div>
+      <div id="phase-flash" class="hidden"></div>
     </div>
 
     <!-- Sidebar: jogadores -->

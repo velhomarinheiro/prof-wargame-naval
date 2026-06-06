@@ -914,3 +914,65 @@ textarea.fac-input { resize: vertical; min-height: 36px; }
 
 /* ─── Fac: neutral unit badge color ──────────────────────────────────────── */
 .fac-neutral { color: #ffd54f; }
+
+/* ─── Zoom controls ──────────────────────────────────────────────────────── */
+#zoom-controls {
+  position: absolute;
+  bottom: 10px; right: 10px;
+  display: flex; align-items: center; gap: 3px;
+  background: rgba(7,25,41,0.88);
+  border: 1px solid rgba(82,140,200,0.35);
+  border-radius: 6px;
+  padding: 3px 6px;
+  z-index: 15;
+}
+#zoom-controls button {
+  background: rgba(130,177,255,0.12);
+  border: 1px solid rgba(130,177,255,0.28);
+  color: var(--blue-l);
+  border-radius: 4px;
+  width: 24px; height: 24px;
+  font-size: 1.05rem; line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+#zoom-controls button:hover { background: rgba(130,177,255,0.30); }
+#zoom-label {
+  font-size: 0.7rem; color: var(--dim);
+  min-width: 36px; text-align: center;
+  font-family: 'Courier New', monospace;
+}
+
+/* ─── Phase flash overlay ────────────────────────────────────────────────── */
+#phase-flash {
+  position: absolute;
+  top: 46%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 1.55rem; font-weight: bold;
+  letter-spacing: 0.18em;
+  text-shadow: 0 0 22px currentColor, 0 2px 8px rgba(0,0,0,0.85);
+  pointer-events: none;
+  z-index: 20;
+  white-space: nowrap;
+  background: rgba(7,25,41,0.75);
+  padding: 10px 26px;
+  border-radius: 6px;
+  border: 1px solid currentColor;
+}
+@keyframes pfIn  {
+  from { opacity:0; transform:translate(-50%,-44%) scale(0.86); }
+  to   { opacity:1; transform:translate(-50%,-50%) scale(1);    }
+}
+@keyframes pfOut {
+  from { opacity:1; transform:translate(-50%,-50%) scale(1);    }
+  to   { opacity:0; transform:translate(-50%,-56%) scale(0.86); }
+}
+.pf-in  { animation: pfIn  0.35s cubic-bezier(0.22,1,0.36,1) both; }
+.pf-out { animation: pfOut 0.45s ease forwards; }
+
+/* ─── BR panel slide-in ──────────────────────────────────────────────────── */
+@keyframes brIn {
+  from { opacity:0; transform:translateY(-14px); }
+  to   { opacity:1; transform:translateY(0);     }
+}
+.br-anim { animation: brIn 0.32s cubic-bezier(0.22,1,0.36,1) both; }

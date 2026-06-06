@@ -51,6 +51,14 @@ let activePath   = [];
 let plannedMoves = new Map();
 let selGroupIds  = [];
 
+// ─── Zoom / pan state ────────────────────────────────────────────────────────
+let zoomLevel = 1.0, panX = 0, panY = 0;
+let _dragOrigin = null, _dragging = false;
+let _pinch0 = null;
+const Z_MIN = 1.0, Z_MAX = 3.5, Z_STEP = 0.2;
+// ─── Animation state ─────────────────────────────────────────────────────────
+let _unitHits = {}, _animRaf = null, _phaseFlashTimer = null;
+
 // ─── Socket ───────────────────────────────────────────────────────────────────
 const socket = io();
 
@@ -122,7 +130,27 @@ socket.on('game_update', state => {
     ? (myRole === 'blue' ? gameState.blueDone : gameState.redDone)
     : false;
 
+  // Detect HP decreases for hit animation (compare before updating gameState)
+  if (gameState?.units && state.units) {
+    for (const newU of state.units) {
+      const oldU = gameState.units.find(u => u.id === newU.id);
+      if (oldU && newU.hp < oldU.hp) triggerUnitHit(newU.id);
+    }
+  }
+
   gameState = state;
+
+  // Phase change flash
+  if (prevPhase && prevPhase !== state.phase) {
+    const PF = {
+      combat:            ['⚔ FASE DE COMBATE',           '#ff8a80'],
+      movement:          [`⚡ TURNO ${state.turn} · MOVIMENTAÇÃO`, '#82b1ff'],
+      movement_approval: ['✔ MOVIMENTOS CONCLUÍDOS',      '#ffd54f'],
+      combat_approval:   ['📋 COMBATE RESOLVIDO',          '#a5d6a7'],
+    };
+    const f = PF[state.phase];
+    if (f) showPhaseFlash(f[0], f[1]);
+  }
 
   const myDoneNow = myRole === 'blue' ? state.blueDone : state.redDone;
   const shouldReset = state.turn !== prevTurn
@@ -389,11 +417,41 @@ $('unit-panel')?.addEventListener('click', e => {
 });
 
 // ─── Canvas input ─────────────────────────────────────────────────────────────
+// ─── helpers for zoomed coordinate transform ─────────────────────────────────
+function _canvasXY(e) {
+  const r = canvas.getBoundingClientRect();
+  return { cx: (e.clientX - r.left) * (canvas.width / r.width),
+           cy: (e.clientY - r.top)  * (canvas.height / r.height) };
+}
+function _worldHex(cx, cy) {
+  return pixelToHex((cx - panX) / zoomLevel, (cy - panY) / zoomLevel);
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  const {cx, cy} = _canvasXY(e);
+  _dragOrigin = { clientX: e.clientX, clientY: e.clientY, panX, panY };
+  _dragging = false;
+});
+
 canvas.addEventListener('mousemove', e => {
-  const r  = canvas.getBoundingClientRect();
-  const sx = canvas.width  / r.width;
-  const sy = canvas.height / r.height;
-  const h  = pixelToHex((e.clientX - r.left) * sx, (e.clientY - r.top) * sy);
+  const {cx, cy} = _canvasXY(e);
+  if (_dragOrigin) {
+    const r  = canvas.getBoundingClientRect();
+    const sx = canvas.width / r.width, sy = canvas.height / r.height;
+    const dx = (e.clientX - _dragOrigin.clientX) * sx;
+    const dy = (e.clientY - _dragOrigin.clientY) * sy;
+    if (!_dragging && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) _dragging = true;
+    if (_dragging) {
+      panX = _dragOrigin.panX + dx; panY = _dragOrigin.panY + dy;
+      clampPan();
+      canvas.style.cursor = 'grabbing';
+      hoverHex = _worldHex(cx, cy);
+      render(); return;
+    }
+  }
+  canvas.style.cursor = 'crosshair';
+  const h = _worldHex(cx, cy);
   hoverHex = h;
   if (h.col >= 0 && h.col < GRID_W && h.row >= 0 && h.row < GRID_H) {
     const t = TERRAIN_MAP[h.row][h.col];
@@ -402,21 +460,84 @@ canvas.addEventListener('mousemove', e => {
     if (inf.length) tip += ' · ' + inf.map(i => i.name).join(', ');
     terrainTip.textContent = tip;
     terrainTip.style.display = 'block';
-  } else {
-    terrainTip.style.display = 'none';
-  }
+  } else { terrainTip.style.display = 'none'; }
   render();
 });
-canvas.addEventListener('mouseleave', () => { hoverHex = null; terrainTip.style.display='none'; render(); });
+
+canvas.addEventListener('mouseup', () => { _dragOrigin = null; canvas.style.cursor = 'crosshair'; });
+
+canvas.addEventListener('mouseleave', () => {
+  _dragOrigin = null; _dragging = false;
+  hoverHex = null; terrainTip.style.display = 'none'; render();
+});
+
+canvas.addEventListener('dblclick', () => { if (!_dragging) resetZoom(); });
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const {cx, cy} = _canvasXY(e);
+  zoomTo(zoomLevel + (e.deltaY < 0 ? Z_STEP : -Z_STEP), cx, cy);
+}, { passive: false });
 
 canvas.addEventListener('click', e => {
+  if (_dragging) { _dragging = false; return; }
   if (!gameState) return;
-  const r  = canvas.getBoundingClientRect();
-  const sx = canvas.width  / r.width;
-  const sy = canvas.height / r.height;
-  const h  = pixelToHex((e.clientX - r.left) * sx, (e.clientY - r.top) * sy);
-  handleClick(h.col, h.row);
+  const {cx, cy} = _canvasXY(e);
+  const {col, row} = _worldHex(cx, cy);
+  handleClick(col, row);
 });
+
+// ─── Touch: drag + pinch-to-zoom ─────────────────────────────────────────────
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    _dragOrigin = { clientX: t.clientX, clientY: t.clientY, panX, panY };
+    _dragging = false; _pinch0 = null;
+  } else if (e.touches.length === 2) {
+    _dragOrigin = null;
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const r = canvas.getBoundingClientRect();
+    _pinch0 = { dist: Math.hypot(t1.clientX-t0.clientX, t1.clientY-t0.clientY),
+      zoom: zoomLevel, panX, panY,
+      mx: ((t0.clientX+t1.clientX)/2 - r.left) * (canvas.width/r.width),
+      my: ((t0.clientY+t1.clientY)/2 - r.top)  * (canvas.height/r.height) };
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (e.touches.length === 1 && _dragOrigin && !_pinch0) {
+    const t = e.touches[0];
+    const r = canvas.getBoundingClientRect();
+    const dx = (t.clientX - _dragOrigin.clientX) * (canvas.width/r.width);
+    const dy = (t.clientY - _dragOrigin.clientY) * (canvas.height/r.height);
+    if (!_dragging && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) _dragging = true;
+    if (_dragging) { panX = _dragOrigin.panX + dx; panY = _dragOrigin.panY + dy; clampPan(); render(); }
+  } else if (e.touches.length === 2 && _pinch0) {
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const dist = Math.hypot(t1.clientX-t0.clientX, t1.clientY-t0.clientY);
+    const newZ = Math.max(Z_MIN, Math.min(Z_MAX, _pinch0.zoom * (dist / _pinch0.dist)));
+    panX = _pinch0.mx - (_pinch0.mx - _pinch0.panX) * (newZ / _pinch0.zoom);
+    panY = _pinch0.my - (_pinch0.my - _pinch0.panY) * (newZ / _pinch0.zoom);
+    zoomLevel = newZ; clampPan(); updateZoomLabel(); render();
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (e.touches.length < 2) _pinch0 = null;
+  if (e.touches.length === 0) {
+    if (!_dragging && _dragOrigin && gameState) {
+      const t = e.changedTouches[0];
+      const {cx, cy} = { cx: (t.clientX - canvas.getBoundingClientRect().left) * (canvas.width / canvas.getBoundingClientRect().width),
+                         cy: (t.clientY - canvas.getBoundingClientRect().top)  * (canvas.height / canvas.getBoundingClientRect().height) };
+      const {col, row} = _worldHex(cx, cy);
+      handleClick(col, row);
+    }
+    _dragOrigin = null; _dragging = false;
+  }
+}, { passive: false });
 
 // ─── Click logic ──────────────────────────────────────────────────────────────
 function handleClick(col, row) {
@@ -812,17 +933,88 @@ function buildAtkListHtml(atks) {
   return `<div class="atk-list"><div class="atk-list-title">Ataques declarados:</div>${items}</div>`;
 }
 
+// ─── Zoom / pan helpers ───────────────────────────────────────────────────────
+function clampPan() {
+  if (zoomLevel <= 1) { panX = 0; panY = 0; return; }
+  panX = Math.max(CVS_W * (1 - zoomLevel), Math.min(0, panX));
+  panY = Math.max(CVS_H * (1 - zoomLevel), Math.min(0, panY));
+}
+function zoomTo(level, pivotX = CVS_W / 2, pivotY = CVS_H / 2) {
+  const newZ = Math.max(Z_MIN, Math.min(Z_MAX, level));
+  panX = pivotX - (pivotX - panX) * (newZ / zoomLevel);
+  panY = pivotY - (pivotY - panY) * (newZ / zoomLevel);
+  zoomLevel = newZ; clampPan(); updateZoomLabel(); render();
+}
+function zoomIn()    { zoomTo(zoomLevel + Z_STEP); }
+function zoomOut()   { zoomTo(zoomLevel - Z_STEP); }
+function resetZoom() { zoomLevel = 1; panX = 0; panY = 0; updateZoomLabel(); render(); }
+function updateZoomLabel() {
+  const el = $('zoom-label');
+  if (el) el.textContent = `${Math.round(zoomLevel * 100)}%`;
+}
+
+// ─── Unit hit pulse animation ─────────────────────────────────────────────────
+function triggerUnitHit(unitId) {
+  _unitHits[unitId] = { endMs: Date.now() + 1400 };
+  if (_animRaf) return;
+  (function frame() {
+    render();
+    if (Object.values(_unitHits).some(h => Date.now() < h.endMs)) _animRaf = requestAnimationFrame(frame);
+    else { _unitHits = {}; _animRaf = null; }
+  })();
+}
+function drawHitAnimations() {
+  const now = Date.now();
+  for (const [uid, anim] of Object.entries(_unitHits)) {
+    if (now >= anim.endMs) continue;
+    const unit = gameState?.units.find(u => u.id === uid);
+    if (!unit) continue;
+    const {x, y} = hexToPixel(unit.col, unit.row);
+    const t = (anim.endMs - now) / 1400;
+    const pulse = Math.abs(Math.sin(t * Math.PI * 5));
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, HEX_R * (0.62 + 0.26 * (1 - t)), 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(255,50,50,${(pulse * 0.92).toFixed(2)})`;
+    ctx.lineWidth = 4 / zoomLevel;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ─── Phase flash overlay ──────────────────────────────────────────────────────
+function showPhaseFlash(text, color) {
+  const el = $('phase-flash');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = color;
+  el.style.borderColor = color + '99';
+  el.classList.remove('hidden', 'pf-in', 'pf-out');
+  void el.offsetWidth;
+  el.classList.add('pf-in');
+  clearTimeout(_phaseFlashTimer);
+  _phaseFlashTimer = setTimeout(() => {
+    el.classList.remove('pf-in');
+    el.classList.add('pf-out');
+    setTimeout(() => { el.classList.add('hidden'); el.classList.remove('pf-out'); }, 500);
+  }, 1800);
+}
+
 // ═══ RENDERING ════════════════════════════════════════════════════════════════
 function render() {
   if (!gameState) return;
   ctx.clearRect(0, 0, CVS_W, CVS_H);
+  ctx.save();
+  ctx.translate(panX, panY);
+  ctx.scale(zoomLevel, zoomLevel);
   drawBackground();
   drawHighlights();
   drawGrid();
   drawInfrastructure();
   drawUnits();
+  drawHitAnimations();
   drawCoordLabels();
   if (hoverHex) drawHover();
+  ctx.restore();
 }
 
 function drawBackground() {
@@ -1102,5 +1294,8 @@ function renderBrPanel({engagement,result,mustDecide,decisions,initiativeBonusTe
     $('br-btn-ok').textContent=label;
     $('br-ok-area').classList.remove('hidden');
   }
-  $('br-panel').classList.remove('hidden');
+  const brEl = $('br-panel');
+  brEl.classList.remove('hidden', 'br-anim');
+  void brEl.offsetWidth;
+  brEl.classList.add('br-anim');
 }
