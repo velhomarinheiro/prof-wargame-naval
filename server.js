@@ -1,4 +1,5 @@
 'use strict';
+const fs       = require('fs');
 const express  = require('express');
 const http     = require('http');
 const { Server } = require('socket.io');
@@ -18,6 +19,30 @@ const {
 const PORT   = process.env.PORT || 3000;
 const GRID_W = 16;
 const GRID_H = 10;
+
+// ─── Game logging (imitation learning) ───────────────────────────────────────
+const LOG_DIR = path.join(__dirname, 'data', 'game-logs');
+fs.mkdirSync(LOG_DIR, { recursive: true });
+
+function appendGameLog(room, event) {
+  if (!room || !room.logFile) return;
+  try {
+    fs.appendFileSync(room.logFile, JSON.stringify({ ...event, ts: new Date().toISOString() }) + '\n');
+  } catch(e) { /* ignore log errors to avoid crashing game */ }
+}
+
+function unitSnapshot(u) {
+  return {
+    id: u.id, team: u.team, name: u.name,
+    category: u.category, type: u.type,
+    col: u.col, row: u.row,
+    hp: u.hp, maxHp: u.maxHp, movement: u.movement,
+    weapons: JSON.parse(JSON.stringify(u.weapons || {})),
+    fuel: u.fuel ? { current: u.fuel.current, max: u.fuel.max, usesFuel: u.fuel.usesFuel } : null,
+    attackRange: u.attackRange || {},
+    detectionRange: u.detectionRange || {},
+  };
+}
 
 // ─── Terrain ─────────────────────────────────────────────────────────────────
 const T_LAND=0,T_SHALLOW=1,T_SHELF=2,T_DEEP=3,T_OIL=4;
@@ -233,6 +258,13 @@ function resolveBattleRound(state,engagement,initiativeBonusTeam=null){
 }
 
 function emitBrResult(room,engagement,result,mustDecide,extra={}){
+  if(result) appendGameLog(room,{
+    event:'engagement_resolved',room:room.id,
+    engagementId:engagement.id,
+    attackerId:engagement.attackerId,targetId:engagement.targetId,
+    weaponType:engagement.weaponType,battleRound:engagement.battleRound,
+    result:{ok:result.ok,totalDamage:result.totalDamage,destroyed:result.destroyed},
+  });
   const payload={engagement,result,mustDecide,...extra};
   if(room.players.blue) io.to(room.players.blue).emit('battle_round_result',payload);
   if(room.players.red)  io.to(room.players.red ).emit('battle_round_result',payload);
@@ -303,6 +335,7 @@ function finishCombatPhase(room){
   if(winner){
     state.winner=winner;
     state.log.unshift(`🏆 ${winner==='blue'?'Força Azul':'Força Vermelha'} VENCEU!`);
+    appendGameLog(room,{event:'game_over',room:room.id,winner,turn:state.turn,period:state.period,units:state.units.map(unitSnapshot)});
     broadcast(room,'game_over',{winner,state:null});
     return;
   }
@@ -453,6 +486,8 @@ io.on('connection',socket=>{
       socket.emit('action_error','Aguardando os dois jogadores conectarem.');return;
     }
     room.state=newGame(room.customOB);
+    room.logFile=path.join(LOG_DIR,`game_${room.id}_${Date.now()}.jsonl`);
+    appendGameLog(room,{event:'game_start',room:room.id,turn:room.state.turn,period:room.state.period,units:room.state.units.map(unitSnapshot)});
     io.to(room.players.blue).emit('game_start',{role:'blue',state:stateFor(room.state,'blue')});
     io.to(room.players.red ).emit('game_start',{role:'red', state:stateFor(room.state,'red')});
     socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
@@ -486,6 +521,14 @@ io.on('connection',socket=>{
       }
     }
 
+    // Capture from-positions before applying (for game log)
+    const _fromMap={};
+    for(const{unitId,path}of(moves||[])){
+      if(!Array.isArray(path)||path.length<2) continue;
+      const _u=state.units.find(u=>u.id===unitId&&u.team===team&&u.hp>0);
+      if(_u) _fromMap[unitId]={col:_u.col,row:_u.row};
+    }
+
     // Apply
     for(const{unitId,path}of(moves||[])){
       if(!Array.isArray(path)||path.length<2) continue;
@@ -508,6 +551,15 @@ io.on('connection',socket=>{
     }
 
     if(team==='blue') state.blueDone=true;else state.redDone=true;
+    appendGameLog(room,{
+      event:'movement_committed',room:room.id,team,
+      turn:state.turn,period:state.period,
+      moves:Object.entries(_fromMap).map(([uid,from])=>{
+        const m=(moves||[]).find(x=>x.unitId===uid);
+        return{unitId:uid,from,to:m?.path[m.path.length-1]};
+      }),
+      units:state.units.map(unitSnapshot),
+    });
 
     if(state.blueDone&&state.redDone){
       // Fuel alerts
@@ -569,6 +621,12 @@ io.on('connection',socket=>{
     if(team==='blue') state.blueAttacks=attacks||[];else state.redAttacks=attacks||[];
     state.log.unshift(`${team==='blue'?'Força Azul':'Força Vermelha'} confirmou ${(attacks||[]).length} ataque(s).`);
     if(state.blueAttacks!==null&&state.redAttacks!==null){
+      appendGameLog(room,{
+        event:'attacks_declared',room:room.id,
+        turn:state.turn,period:state.period,
+        blueAttacks:state.blueAttacks,redAttacks:state.redAttacks,
+        units:state.units.map(unitSnapshot),
+      });
       state.log.unshift('── Resolução de Combate ──');
       state.combatQueue=buildCombatQueue(state);
       state.currentEngagementIndex=0;
@@ -610,6 +668,7 @@ io.on('connection',socket=>{
     if(winner){
       state.winner=winner;
       state.log.unshift(`🏆 ${winner==='blue'?'Força Azul':'Força Vermelha'} VENCEU!`);
+      appendGameLog(room,{event:'game_over',room:room.id,winner,turn:state.turn,period:state.period,units:state.units.map(unitSnapshot)});
       broadcast(room,'game_over');
       return;
     }

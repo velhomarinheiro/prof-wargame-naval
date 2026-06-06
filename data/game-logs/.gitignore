@@ -1,0 +1,3 @@
+# Ignore game log files — they are generated locally or by the live server.
+# Only .gitkeep (and this file) are tracked so the directory exists in git.
+*.jsonl
