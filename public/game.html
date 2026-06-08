@@ -214,6 +214,28 @@
         <button onclick="resetZoom()" title="Resetar (duplo clique)" style="font-size:0.62rem;letter-spacing:0">↺</button>
       </div>
       <div id="phase-flash" class="hidden"></div>
+      <!-- Hover tooltip -->
+      <div id="unit-tooltip" class="unit-tooltip hidden">
+        <div class="utt-header">
+          <canvas id="utt-canvas" width="70" height="70" class="utt-canvas"></canvas>
+          <div class="utt-info">
+            <div class="utt-name-row">
+              <span class="utt-name" id="utt-name"></span>
+              <span id="utt-badge"></span>
+            </div>
+            <div class="utt-sp-bar"><div class="utt-sp-fill" id="utt-sp-fill"></div></div>
+            <div class="utt-sp-val" id="utt-sp-val"></div>
+            <div class="utt-stats" id="utt-stats"></div>
+          </div>
+        </div>
+        <div class="utt-hint">⚙ Botão direito para detalhes completos</div>
+      </div>
+      <!-- Detail popup (right-click) -->
+      <div id="unit-detail" class="unit-detail hidden">
+        <button class="ud-close" onclick="closeUnitDetail()">✕</button>
+        <div id="ud-header" class="ud-header"></div>
+        <div id="ud-body"   class="ud-body"></div>
+      </div>
     </div>
 
     <!-- Sidebar: jogadores -->

@@ -58,6 +58,8 @@ let _pinch0 = null;
 const Z_MIN = 1.0, Z_MAX = 3.5, Z_STEP = 0.2;
 // ─── Animation state ─────────────────────────────────────────────────────────
 let _unitHits = {}, _animRaf = null, _phaseFlashTimer = null;
+// ─── Tooltip state ────────────────────────────────────────────────────────────
+let _tooltipTimer = null, _tooltipUnitId = null;
 
 // ─── Socket ───────────────────────────────────────────────────────────────────
 const socket = io();
@@ -447,6 +449,7 @@ canvas.addEventListener('mousemove', e => {
       clampPan();
       canvas.style.cursor = 'grabbing';
       hoverHex = _worldHex(cx, cy);
+      hideUnitTooltip();
       render(); return;
     }
   }
@@ -461,6 +464,18 @@ canvas.addEventListener('mousemove', e => {
     terrainTip.textContent = tip;
     terrainTip.style.display = 'block';
   } else { terrainTip.style.display = 'none'; }
+  // Unit hover tooltip (appears after 400 ms of stable hover)
+  if (gameState) {
+    const topUnit = gameState.units.find(u => u.col === h.col && u.row === h.row && u.hp > 0);
+    if (topUnit) {
+      if (_tooltipUnitId !== topUnit.id) {
+        clearTimeout(_tooltipTimer);
+        const tel = $('unit-tooltip'); if (tel) tel.classList.add('hidden');
+        _tooltipUnitId = topUnit.id;
+        _tooltipTimer = setTimeout(() => showUnitTooltip(topUnit, e.clientX, e.clientY), 400);
+      }
+    } else { hideUnitTooltip(); }
+  }
   render();
 });
 
@@ -468,7 +483,9 @@ canvas.addEventListener('mouseup', () => { _dragOrigin = null; canvas.style.curs
 
 canvas.addEventListener('mouseleave', () => {
   _dragOrigin = null; _dragging = false;
-  hoverHex = null; terrainTip.style.display = 'none'; render();
+  hoverHex = null; terrainTip.style.display = 'none';
+  hideUnitTooltip();
+  render();
 });
 
 canvas.addEventListener('dblclick', () => { if (!_dragging) resetZoom(); });
@@ -485,6 +502,23 @@ canvas.addEventListener('click', e => {
   const {cx, cy} = _canvasXY(e);
   const {col, row} = _worldHex(cx, cy);
   handleClick(col, row);
+});
+
+canvas.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  hideUnitTooltip();
+  if (!gameState) return;
+  const {cx, cy} = _canvasXY(e);
+  const {col, row} = _worldHex(cx, cy);
+  const hits = gameState.units.filter(u => u.col === col && u.row === row && u.hp > 0);
+  if (!hits.length) { closeUnitDetail(); return; }
+  showUnitDetail(hits.find(u => u.id === selUnitId) || hits[0], e.clientX, e.clientY);
+});
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeUnitDetail(); });
+document.addEventListener('click',   e => {
+  const d = $('unit-detail');
+  if (d && !d.classList.contains('hidden') && !d.contains(e.target)) closeUnitDetail();
 });
 
 // ─── Touch: drag + pinch-to-zoom ─────────────────────────────────────────────
@@ -932,6 +966,127 @@ function buildAtkListHtml(atks) {
   }).join('');
   return `<div class="atk-list"><div class="atk-list-title">Ataques declarados:</div>${items}</div>`;
 }
+
+// ─── Tooltip / detail popup ───────────────────────────────────────────────────
+function _renderUnitPreview(canvasEl, unit, w, h) {
+  if (!canvasEl) return;
+  const pCtx = canvasEl.getContext('2d');
+  pCtx.clearRect(0, 0, w, h);
+  const scale = (w * 0.65) / HEX_R;
+  pCtx.save();
+  pCtx.translate(w / 2, h / 2);
+  pCtx.scale(scale, scale);
+  pCtx.beginPath(); pCtx.arc(0, 0, HEX_R * 0.58, 0, Math.PI * 2);
+  pCtx.fillStyle = 'rgba(0,0,0,0.45)'; pCtx.fill();
+  drawUnitCounter(pCtx, unit, 0, 0, false);
+  pCtx.restore();
+}
+
+function showUnitTooltip(unit, screenX, screenY) {
+  const el = $('unit-tooltip');
+  if (!el || !unit) return;
+  _renderUnitPreview($('utt-canvas'), unit, 70, 70);
+  const teamCls = unit.team === 'blue' ? 'blue' : unit.team === 'red' ? 'red' : 'neutral';
+  const teamLbl = unit.team === 'blue' ? 'AZL' : unit.team === 'red' ? 'VRM' : 'NEU';
+  $('utt-name').textContent = unit.name;
+  const badge = $('utt-badge');
+  badge.textContent = teamLbl;
+  badge.className = `team-badge ${teamCls}`;
+  badge.style.cssText = 'font-size:0.57rem;padding:1px 5px';
+  const pct = unit.maxHp > 0 ? unit.hp / unit.maxHp * 100 : 0;
+  const col = pct > 60 ? '#69f0ae' : pct > 30 ? '#ffca28' : '#ff5252';
+  $('utt-sp-fill').style.cssText = `width:${pct}%;background:${col}`;
+  $('utt-sp-val').textContent = `${unit.hp}/${unit.maxHp} SP`;
+  const det = unit.detectionRange || {};
+  const stats = [['MOV',unit.movement],['Sup',det.surface||0],['Aé',det.air||0],['Sub',det.submarine||0]]
+    .filter(([k,v])=>v>0||k==='MOV')
+    .map(([k,v])=>`<span><span class="utt-sk">${k}</span>${v}</span>`).join('');
+  $('utt-stats').innerHTML = stats;
+  el.classList.remove('hidden');
+  el.style.visibility = 'hidden'; el.style.left = '0'; el.style.top = '0';
+  const ew = el.offsetWidth, eh = el.offsetHeight, m = 14;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let tx = screenX + m, ty = screenY + m;
+  if (tx + ew > vw - m) tx = screenX - ew - m;
+  if (ty + eh > vh - m) ty = screenY - eh - m;
+  el.style.left = `${tx}px`; el.style.top = `${ty}px`; el.style.visibility = '';
+}
+
+function hideUnitTooltip() {
+  clearTimeout(_tooltipTimer); _tooltipTimer = null; _tooltipUnitId = null;
+  const el = $('unit-tooltip'); if (el) el.classList.add('hidden');
+}
+
+function showUnitDetail(unit, screenX, screenY) {
+  const el = $('unit-detail');
+  if (!el || !unit) return;
+  const teamCls = unit.team === 'blue' ? 'blue' : unit.team === 'red' ? 'red' : 'neutral';
+  const teamLbl = unit.team === 'blue' ? 'FORÇA AZUL' : unit.team === 'red' ? 'FORÇA VERMELHA' : 'NEUTRO';
+  const catLbl  = {surface:'Superfície',submarine:'Submarino',air:'Aéreo',land:'Terrestre'}[unit.category] || unit.category;
+  const abbr    = (typeof TYPE_ABBR !== 'undefined' && TYPE_ABBR[unit.type]) || unit.type.slice(0,2).toUpperCase();
+  const det = unit.detectionRange || {}, atk = unit.attackRange || {};
+  const wpns = unit.weapons || {}, initW = unit.initWeapons || {}, caps = unit.capabilities || {};
+  const pct = unit.maxHp > 0 ? unit.hp / unit.maxHp * 100 : 0;
+  const hpCol = pct > 60 ? '#69f0ae' : pct > 30 ? '#ffca28' : '#ff5252';
+  const wpnRows = Object.entries(wpns)
+    .filter(([k,w]) => w.quantity > 0 || (initW[k]?.quantity ?? 0) > 0)
+    .map(([k,w]) => `<div class="udr"><span class="udk">${k.toUpperCase()}</span><span class="udv">${w.quantity}/${initW[k]?.quantity ?? w.quantity}</span></div>`)
+    .join('') || '<div class="ud-dim">Sem armamento registrado</div>';
+  const capText  = Object.entries(caps).filter(([,v])=>v>0).map(([k,v])=>`${k.toUpperCase()}:${v}`).join(' · ');
+  const compText = (unit.composition||[]).map(c=>`${c.quantity}× ${c.type}`).join(' · ');
+  const f = unit.fuel;
+  const fuelHtml = f?.usesFuel
+    ? `<div class="udr"><span class="udk">Combustível</span><span class="udv">${unit.category==='air'?(f.current??f.max):(f.current??0)}/${f.max} FP</span></div>` : '';
+  $('ud-header').innerHTML = `
+    <canvas id="ud-canvas" width="110" height="110" class="ud-canvas"></canvas>
+    <div class="ud-hinfo">
+      <div class="ud-hname ${teamCls}">${unit.name}</div>
+      <div class="ud-hsub">${abbr} · ${catLbl}</div>
+      <span class="team-badge ${teamCls}" style="font-size:0.58rem;padding:2px 7px">${teamLbl}</span>
+    </div>`;
+  $('ud-body').innerHTML = `
+    <div class="ud-sect">
+      <div class="ud-sp-bar"><div class="ud-sp-fill" style="width:${pct}%;background:${hpCol}"></div></div>
+      <div class="ud-grid">
+        <div class="udr"><span class="udk">SP</span><span class="udv">${unit.hp}/${unit.maxHp}</span></div>
+        <div class="udr"><span class="udk">MOV</span><span class="udv">${unit.movement}</span></div>
+        ${fuelHtml}
+      </div>
+    </div>
+    <div class="ud-sep"></div>
+    <div class="ud-2col">
+      <div>
+        <div class="ud-stitle">DETECÇÃO</div>
+        <div class="udr"><span class="udk">Sup</span><span class="udv">${det.surface||0}</span></div>
+        <div class="udr"><span class="udk">Aé</span><span class="udv">${det.air||0}</span></div>
+        <div class="udr"><span class="udk">Sub</span><span class="udv">${det.submarine||0}</span></div>
+        <div class="udr"><span class="udk">Ter</span><span class="udv">${det.land||0}</span></div>
+      </div>
+      <div>
+        <div class="ud-stitle">ALCANCE ATQ.</div>
+        <div class="udr"><span class="udk">Sup</span><span class="udv">${atk.surface||0}</span></div>
+        <div class="udr"><span class="udk">Aé</span><span class="udv">${atk.air||0}</span></div>
+        <div class="udr"><span class="udk">Sub</span><span class="udv">${atk.submarine||0}</span></div>
+        <div class="udr"><span class="udk">Ter</span><span class="udv">${atk.land||0}</span></div>
+      </div>
+    </div>
+    <div class="ud-sep"></div>
+    <div class="ud-stitle">ARMAMENTO</div>${wpnRows}
+    ${capText?`<div class="ud-sep"></div><div class="ud-stitle">CAPACIDADES</div><div class="ud-dim">${capText}</div>`:''}
+    ${compText?`<div class="ud-sep"></div><div class="ud-stitle">COMPOSIÇÃO</div><div class="ud-dim">${compText}</div>`:''}
+    ${unit.notes?`<div class="ud-note">📝 ${unit.notes}</div>`:''}`;
+  el.classList.remove('hidden');
+  _renderUnitPreview($('ud-canvas'), unit, 110, 110);
+  el.style.visibility = 'hidden'; el.style.left = '0'; el.style.top = '0';
+  const ew = el.offsetWidth, eh = el.offsetHeight, m = 10;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let tx = screenX + m, ty = screenY + m;
+  if (tx + ew > vw - m) tx = screenX - ew - m;
+  if (ty + eh > vh - m) ty = Math.max(m, screenY - eh - m);
+  el.style.left = `${tx}px`; el.style.top = `${ty}px`; el.style.visibility = '';
+}
+
+function closeUnitDetail() { const el=$('unit-detail'); if(el) el.classList.add('hidden'); }
 
 // ─── Zoom / pan helpers ───────────────────────────────────────────────────────
 function clampPan() {
