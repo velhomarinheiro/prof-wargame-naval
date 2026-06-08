@@ -51,6 +51,16 @@ let activePath   = [];
 let plannedMoves = new Map();
 let selGroupIds  = [];
 
+// ─── Zoom / pan state ────────────────────────────────────────────────────────
+let zoomLevel = 1.0, panX = 0, panY = 0;
+let _dragOrigin = null, _dragging = false;
+let _pinch0 = null;
+const Z_MIN = 1.0, Z_MAX = 3.5, Z_STEP = 0.2;
+// ─── Animation state ─────────────────────────────────────────────────────────
+let _unitHits = {}, _animRaf = null, _phaseFlashTimer = null;
+// ─── Tooltip state ────────────────────────────────────────────────────────────
+let _tooltipTimer = null, _tooltipUnitId = null;
+
 // ─── Socket ───────────────────────────────────────────────────────────────────
 const socket = io();
 
@@ -122,7 +132,27 @@ socket.on('game_update', state => {
     ? (myRole === 'blue' ? gameState.blueDone : gameState.redDone)
     : false;
 
+  // Detect HP decreases for hit animation (compare before updating gameState)
+  if (gameState?.units && state.units) {
+    for (const newU of state.units) {
+      const oldU = gameState.units.find(u => u.id === newU.id);
+      if (oldU && newU.hp < oldU.hp) triggerUnitHit(newU.id);
+    }
+  }
+
   gameState = state;
+
+  // Phase change flash
+  if (prevPhase && prevPhase !== state.phase) {
+    const PF = {
+      combat:            ['⚔ FASE DE COMBATE',           '#ff8a80'],
+      movement:          [`⚡ TURNO ${state.turn} · MOVIMENTAÇÃO`, '#82b1ff'],
+      movement_approval: ['✔ MOVIMENTOS CONCLUÍDOS',      '#ffd54f'],
+      combat_approval:   ['📋 COMBATE RESOLVIDO',          '#a5d6a7'],
+    };
+    const f = PF[state.phase];
+    if (f) showPhaseFlash(f[0], f[1]);
+  }
 
   const myDoneNow = myRole === 'blue' ? state.blueDone : state.redDone;
   const shouldReset = state.turn !== prevTurn
@@ -150,6 +180,7 @@ socket.on('game_update', state => {
     facUpdatePhaseUI(state.phase);
     facRenderMessages(state.messages || []);
     facRenderUnitManager(state);
+    facRenderLog(state);
   }
 
   // Aprovação de combate: abre painel automaticamente
@@ -166,6 +197,7 @@ socket.on('movement_approval_needed', state => {
   if (myRole === 'facilitator') {
     facShowMovementApproval(state);
     facRenderUnitManager(state);
+    facRenderLog(state);
   }
   updateUI(); render();
 });
@@ -176,6 +208,7 @@ socket.on('combat_approval_needed', state => {
   if (myRole === 'facilitator') {
     facShowCombatApproval(state);
     facRenderUnitManager(state);
+    facRenderLog(state);
   }
   updateUI(); render();
 });
@@ -184,7 +217,10 @@ socket.on('game_over', ({ winner, state }) => {
   if (state) gameState = state;
   if (gameState) gameState.winner = winner;
   updateUI(); render();
-  if (myRole !== 'facilitator') {
+  if (winner === 'draw') {
+    winnerMsg.textContent = '🚩 Jogo encerrado pelo Facilitador.';
+    winnerMsg.className   = 'victory';
+  } else if (myRole !== 'facilitator') {
     const mine = winner === myRole;
     winnerMsg.textContent = mine ? '🏆 VITÓRIA! Sua força prevaleceu.' : '💀 DERROTA. Sua frota foi afundada.';
     winnerMsg.className   = mine ? 'victory' : 'defeat';
@@ -209,6 +245,41 @@ socket.on('action_error', msg => {
 });
 
 socket.on('battle_round_result', data => handleBrResult(data));
+
+// Facilitador: resultado de batalha aguardando aprovação
+socket.on('br_result_pending', data => {
+  if (myRole !== 'facilitator') return;
+  // Force-render the new engagement immediately, discarding any stale queued content
+  brQueue = [];
+  renderBrPanel(data);
+  // Replace OK button with fac approval area
+  const okArea  = $('br-ok-area');
+  const facArea = $('br-fac-area');
+  if (okArea)  okArea.classList.add('hidden');
+  if (facArea) {
+    facArea.classList.remove('hidden');
+    const hpEl = $('br-fac-hp-changes');
+    if (hpEl && gameState) {
+      const eng  = data.engagement || {};
+      const seen = new Set();
+      const involved = [eng.attackerId, eng.targetId]
+        .filter(Boolean)
+        .map(id => gameState.units.find(u => u.id === id && u.hp > 0))
+        .filter(u => u && !seen.has(u.id) && seen.add(u.id));
+      hpEl.innerHTML = involved.map(u => {
+        const tc = u.team === 'blue' ? 'cm-blue' : u.team === 'red' ? 'cm-red' : '';
+        return `<div class="fac-hp-row">
+          <span class="${tc}">${u.name}</span>
+          <input class="fac-hp-input" type="number" min="0" max="${u.maxHp}"
+            value="${u.hp}" data-uid="${u.id}" data-maxhp="${u.maxHp}"
+            data-currhp="${u.hp}" data-name="${u.name.replace(/"/g,'&quot;')}"
+            style="width:46px;margin-left:8px">
+          <span style="font-size:0.68rem;color:var(--dim)"> / ${u.maxHp}</span>
+        </div>`;
+      }).join('');
+    }
+  }
+});
 
 socket.on('fuel_alert', ({ name, type }) => {
   const msg = type === 'air_lost'
@@ -297,6 +368,8 @@ function setupFacilitatorUI() {
   if (sidebar) sidebar.classList.add('fac-sidebar');
   $('fac-panels').classList.remove('hidden');
   $('player-panels').classList.add('hidden');
+  $('fac-header-btns').classList.remove('hidden');
+  facRefreshUnitTypeSelect();
 }
 
 // ─── Game actions (players only) ──────────────────────────────────────────────
@@ -346,11 +419,42 @@ $('unit-panel')?.addEventListener('click', e => {
 });
 
 // ─── Canvas input ─────────────────────────────────────────────────────────────
+// ─── helpers for zoomed coordinate transform ─────────────────────────────────
+function _canvasXY(e) {
+  const r = canvas.getBoundingClientRect();
+  return { cx: (e.clientX - r.left) * (canvas.width / r.width),
+           cy: (e.clientY - r.top)  * (canvas.height / r.height) };
+}
+function _worldHex(cx, cy) {
+  return pixelToHex((cx - panX) / zoomLevel, (cy - panY) / zoomLevel);
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  const {cx, cy} = _canvasXY(e);
+  _dragOrigin = { clientX: e.clientX, clientY: e.clientY, panX, panY };
+  _dragging = false;
+});
+
 canvas.addEventListener('mousemove', e => {
-  const r  = canvas.getBoundingClientRect();
-  const sx = canvas.width  / r.width;
-  const sy = canvas.height / r.height;
-  const h  = pixelToHex((e.clientX - r.left) * sx, (e.clientY - r.top) * sy);
+  const {cx, cy} = _canvasXY(e);
+  if (_dragOrigin) {
+    const r  = canvas.getBoundingClientRect();
+    const sx = canvas.width / r.width, sy = canvas.height / r.height;
+    const dx = (e.clientX - _dragOrigin.clientX) * sx;
+    const dy = (e.clientY - _dragOrigin.clientY) * sy;
+    if (!_dragging && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) _dragging = true;
+    if (_dragging) {
+      panX = _dragOrigin.panX + dx; panY = _dragOrigin.panY + dy;
+      clampPan();
+      canvas.style.cursor = 'grabbing';
+      hoverHex = _worldHex(cx, cy);
+      hideUnitTooltip();
+      render(); return;
+    }
+  }
+  canvas.style.cursor = 'crosshair';
+  const h = _worldHex(cx, cy);
   hoverHex = h;
   if (h.col >= 0 && h.col < GRID_W && h.row >= 0 && h.row < GRID_H) {
     const t = TERRAIN_MAP[h.row][h.col];
@@ -359,21 +463,115 @@ canvas.addEventListener('mousemove', e => {
     if (inf.length) tip += ' · ' + inf.map(i => i.name).join(', ');
     terrainTip.textContent = tip;
     terrainTip.style.display = 'block';
-  } else {
-    terrainTip.style.display = 'none';
+  } else { terrainTip.style.display = 'none'; }
+  // Unit hover tooltip (appears after 400 ms of stable hover)
+  if (gameState) {
+    const topUnit = gameState.units.find(u => u.col === h.col && u.row === h.row && u.hp > 0);
+    if (topUnit) {
+      if (_tooltipUnitId !== topUnit.id) {
+        clearTimeout(_tooltipTimer);
+        const tel = $('unit-tooltip'); if (tel) tel.classList.add('hidden');
+        _tooltipUnitId = topUnit.id;
+        _tooltipTimer = setTimeout(() => showUnitTooltip(topUnit, e.clientX, e.clientY), 400);
+      }
+    } else { hideUnitTooltip(); }
   }
   render();
 });
-canvas.addEventListener('mouseleave', () => { hoverHex = null; terrainTip.style.display='none'; render(); });
+
+canvas.addEventListener('mouseup', () => { _dragOrigin = null; canvas.style.cursor = 'crosshair'; });
+
+canvas.addEventListener('mouseleave', () => {
+  _dragOrigin = null; _dragging = false;
+  hoverHex = null; terrainTip.style.display = 'none';
+  hideUnitTooltip();
+  render();
+});
+
+canvas.addEventListener('dblclick', () => { if (!_dragging) resetZoom(); });
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const {cx, cy} = _canvasXY(e);
+  zoomTo(zoomLevel + (e.deltaY < 0 ? Z_STEP : -Z_STEP), cx, cy);
+}, { passive: false });
 
 canvas.addEventListener('click', e => {
+  if (_dragging) { _dragging = false; return; }
   if (!gameState) return;
-  const r  = canvas.getBoundingClientRect();
-  const sx = canvas.width  / r.width;
-  const sy = canvas.height / r.height;
-  const h  = pixelToHex((e.clientX - r.left) * sx, (e.clientY - r.top) * sy);
-  handleClick(h.col, h.row);
+  const {cx, cy} = _canvasXY(e);
+  const {col, row} = _worldHex(cx, cy);
+  handleClick(col, row);
 });
+
+canvas.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  hideUnitTooltip();
+  if (!gameState) return;
+  const {cx, cy} = _canvasXY(e);
+  const {col, row} = _worldHex(cx, cy);
+  const hits = gameState.units.filter(u => u.col === col && u.row === row && u.hp > 0);
+  if (!hits.length) { closeUnitDetail(); return; }
+  showUnitDetail(hits.find(u => u.id === selUnitId) || hits[0], e.clientX, e.clientY);
+});
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeUnitDetail(); });
+document.addEventListener('click',   e => {
+  const d = $('unit-detail');
+  if (d && !d.classList.contains('hidden') && !d.contains(e.target)) closeUnitDetail();
+});
+
+// ─── Touch: drag + pinch-to-zoom ─────────────────────────────────────────────
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    _dragOrigin = { clientX: t.clientX, clientY: t.clientY, panX, panY };
+    _dragging = false; _pinch0 = null;
+  } else if (e.touches.length === 2) {
+    _dragOrigin = null;
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const r = canvas.getBoundingClientRect();
+    _pinch0 = { dist: Math.hypot(t1.clientX-t0.clientX, t1.clientY-t0.clientY),
+      zoom: zoomLevel, panX, panY,
+      mx: ((t0.clientX+t1.clientX)/2 - r.left) * (canvas.width/r.width),
+      my: ((t0.clientY+t1.clientY)/2 - r.top)  * (canvas.height/r.height) };
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (e.touches.length === 1 && _dragOrigin && !_pinch0) {
+    const t = e.touches[0];
+    const r = canvas.getBoundingClientRect();
+    const dx = (t.clientX - _dragOrigin.clientX) * (canvas.width/r.width);
+    const dy = (t.clientY - _dragOrigin.clientY) * (canvas.height/r.height);
+    if (!_dragging && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) _dragging = true;
+    if (_dragging) { panX = _dragOrigin.panX + dx; panY = _dragOrigin.panY + dy; clampPan(); render(); }
+  } else if (e.touches.length === 2 && _pinch0) {
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const dist = Math.hypot(t1.clientX-t0.clientX, t1.clientY-t0.clientY);
+    const newZ = Math.max(Z_MIN, Math.min(Z_MAX, _pinch0.zoom * (dist / _pinch0.dist)));
+    panX = _pinch0.mx - (_pinch0.mx - _pinch0.panX) * (newZ / _pinch0.zoom);
+    panY = _pinch0.my - (_pinch0.my - _pinch0.panY) * (newZ / _pinch0.zoom);
+    zoomLevel = newZ; clampPan(); updateZoomLabel(); render();
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (e.touches.length < 2) _pinch0 = null;
+  if (e.touches.length === 0) {
+    if (!_dragging && _dragOrigin && gameState) {
+      const t = e.changedTouches[0];
+      const {cx, cy} = { cx: (t.clientX - canvas.getBoundingClientRect().left) * (canvas.width / canvas.getBoundingClientRect().width),
+                         cy: (t.clientY - canvas.getBoundingClientRect().top)  * (canvas.height / canvas.getBoundingClientRect().height) };
+      const {col, row} = _worldHex(cx, cy);
+      handleClick(col, row);
+    }
+    _dragOrigin = null; _dragging = false;
+  }
+}, { passive: false });
 
 // ─── Click logic ──────────────────────────────────────────────────────────────
 function handleClick(col, row) {
@@ -382,21 +580,13 @@ function handleClick(col, row) {
 
   // Facilitador: reposicionamento de unidade
   if (myRole === 'facilitator') {
-    // Durante aprovação de movimentos: reposicionamento temporário
-    if (gameState.phase === 'movement_approval' && facHandleMapClickForRepo(col, row)) {
-      // Aplica override visual (simulado via reposition)
-      socket.emit('facilitator_reposition', { unitId: facRepoUnitId || '', col, row });
-      return;
-    }
-    // Fora de aprovação: reposicionamento imediato
     if (facRepoUnitId) {
       socket.emit('facilitator_reposition', { unitId: facRepoUnitId, col, row });
       facRepoUnitId = null;
       showFacNotice(`Unidade movida para ${String.fromCharCode(65+col)}${row+1}`);
       return;
     }
-
-    // Facilitador pode selecionar unidade para reposicionar
+    // Selecionar unidade para reposicionar
     const anyUnit = gameState.units.filter(u => u.col === col && u.row === row && u.hp > 0);
     if (anyUnit.length > 0) {
       facRepoUnitId = anyUnit[0].id;
@@ -777,17 +967,209 @@ function buildAtkListHtml(atks) {
   return `<div class="atk-list"><div class="atk-list-title">Ataques declarados:</div>${items}</div>`;
 }
 
+// ─── Tooltip / detail popup ───────────────────────────────────────────────────
+function _renderUnitPreview(canvasEl, unit, w, h) {
+  if (!canvasEl) return;
+  const pCtx = canvasEl.getContext('2d');
+  pCtx.clearRect(0, 0, w, h);
+  const scale = (w * 0.65) / HEX_R;
+  pCtx.save();
+  pCtx.translate(w / 2, h / 2);
+  pCtx.scale(scale, scale);
+  pCtx.beginPath(); pCtx.arc(0, 0, HEX_R * 0.58, 0, Math.PI * 2);
+  pCtx.fillStyle = 'rgba(0,0,0,0.45)'; pCtx.fill();
+  drawUnitCounter(pCtx, unit, 0, 0, false);
+  pCtx.restore();
+}
+
+function showUnitTooltip(unit, screenX, screenY) {
+  const el = $('unit-tooltip');
+  if (!el || !unit) return;
+  _renderUnitPreview($('utt-canvas'), unit, 70, 70);
+  const teamCls = unit.team === 'blue' ? 'blue' : unit.team === 'red' ? 'red' : 'neutral';
+  const teamLbl = unit.team === 'blue' ? 'AZL' : unit.team === 'red' ? 'VRM' : 'NEU';
+  $('utt-name').textContent = unit.name;
+  const badge = $('utt-badge');
+  badge.textContent = teamLbl;
+  badge.className = `team-badge ${teamCls}`;
+  badge.style.cssText = 'font-size:0.57rem;padding:1px 5px';
+  const pct = unit.maxHp > 0 ? unit.hp / unit.maxHp * 100 : 0;
+  const col = pct > 60 ? '#69f0ae' : pct > 30 ? '#ffca28' : '#ff5252';
+  $('utt-sp-fill').style.cssText = `width:${pct}%;background:${col}`;
+  $('utt-sp-val').textContent = `${unit.hp}/${unit.maxHp} SP`;
+  const det = unit.detectionRange || {};
+  const stats = [['MOV',unit.movement],['Sup',det.surface||0],['Aé',det.air||0],['Sub',det.submarine||0]]
+    .filter(([k,v])=>v>0||k==='MOV')
+    .map(([k,v])=>`<span><span class="utt-sk">${k}</span>${v}</span>`).join('');
+  $('utt-stats').innerHTML = stats;
+  el.classList.remove('hidden');
+  el.style.visibility = 'hidden'; el.style.left = '0'; el.style.top = '0';
+  const ew = el.offsetWidth, eh = el.offsetHeight, m = 14;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let tx = screenX + m, ty = screenY + m;
+  if (tx + ew > vw - m) tx = screenX - ew - m;
+  if (ty + eh > vh - m) ty = screenY - eh - m;
+  el.style.left = `${tx}px`; el.style.top = `${ty}px`; el.style.visibility = '';
+}
+
+function hideUnitTooltip() {
+  clearTimeout(_tooltipTimer); _tooltipTimer = null; _tooltipUnitId = null;
+  const el = $('unit-tooltip'); if (el) el.classList.add('hidden');
+}
+
+function showUnitDetail(unit, screenX, screenY) {
+  const el = $('unit-detail');
+  if (!el || !unit) return;
+  const teamCls = unit.team === 'blue' ? 'blue' : unit.team === 'red' ? 'red' : 'neutral';
+  const teamLbl = unit.team === 'blue' ? 'FORÇA AZUL' : unit.team === 'red' ? 'FORÇA VERMELHA' : 'NEUTRO';
+  const catLbl  = {surface:'Superfície',submarine:'Submarino',air:'Aéreo',land:'Terrestre'}[unit.category] || unit.category;
+  const abbr    = (typeof TYPE_ABBR !== 'undefined' && TYPE_ABBR[unit.type]) || unit.type.slice(0,2).toUpperCase();
+  const det = unit.detectionRange || {}, atk = unit.attackRange || {};
+  const wpns = unit.weapons || {}, initW = unit.initWeapons || {}, caps = unit.capabilities || {};
+  const pct = unit.maxHp > 0 ? unit.hp / unit.maxHp * 100 : 0;
+  const hpCol = pct > 60 ? '#69f0ae' : pct > 30 ? '#ffca28' : '#ff5252';
+  const wpnRows = Object.entries(wpns)
+    .filter(([k,w]) => w.quantity > 0 || (initW[k]?.quantity ?? 0) > 0)
+    .map(([k,w]) => `<div class="udr"><span class="udk">${k.toUpperCase()}</span><span class="udv">${w.quantity}/${initW[k]?.quantity ?? w.quantity}</span></div>`)
+    .join('') || '<div class="ud-dim">Sem armamento registrado</div>';
+  const capText  = Object.entries(caps).filter(([,v])=>v>0).map(([k,v])=>`${k.toUpperCase()}:${v}`).join(' · ');
+  const compText = (unit.composition||[]).map(c=>`${c.quantity}× ${c.type}`).join(' · ');
+  const f = unit.fuel;
+  const fuelHtml = f?.usesFuel
+    ? `<div class="udr"><span class="udk">Combustível</span><span class="udv">${unit.category==='air'?(f.current??f.max):(f.current??0)}/${f.max} FP</span></div>` : '';
+  $('ud-header').innerHTML = `
+    <canvas id="ud-canvas" width="110" height="110" class="ud-canvas"></canvas>
+    <div class="ud-hinfo">
+      <div class="ud-hname ${teamCls}">${unit.name}</div>
+      <div class="ud-hsub">${abbr} · ${catLbl}</div>
+      <span class="team-badge ${teamCls}" style="font-size:0.58rem;padding:2px 7px">${teamLbl}</span>
+    </div>`;
+  $('ud-body').innerHTML = `
+    <div class="ud-sect">
+      <div class="ud-sp-bar"><div class="ud-sp-fill" style="width:${pct}%;background:${hpCol}"></div></div>
+      <div class="ud-grid">
+        <div class="udr"><span class="udk">SP</span><span class="udv">${unit.hp}/${unit.maxHp}</span></div>
+        <div class="udr"><span class="udk">MOV</span><span class="udv">${unit.movement}</span></div>
+        ${fuelHtml}
+      </div>
+    </div>
+    <div class="ud-sep"></div>
+    <div class="ud-2col">
+      <div>
+        <div class="ud-stitle">DETECÇÃO</div>
+        <div class="udr"><span class="udk">Sup</span><span class="udv">${det.surface||0}</span></div>
+        <div class="udr"><span class="udk">Aé</span><span class="udv">${det.air||0}</span></div>
+        <div class="udr"><span class="udk">Sub</span><span class="udv">${det.submarine||0}</span></div>
+        <div class="udr"><span class="udk">Ter</span><span class="udv">${det.land||0}</span></div>
+      </div>
+      <div>
+        <div class="ud-stitle">ALCANCE ATQ.</div>
+        <div class="udr"><span class="udk">Sup</span><span class="udv">${atk.surface||0}</span></div>
+        <div class="udr"><span class="udk">Aé</span><span class="udv">${atk.air||0}</span></div>
+        <div class="udr"><span class="udk">Sub</span><span class="udv">${atk.submarine||0}</span></div>
+        <div class="udr"><span class="udk">Ter</span><span class="udv">${atk.land||0}</span></div>
+      </div>
+    </div>
+    <div class="ud-sep"></div>
+    <div class="ud-stitle">ARMAMENTO</div>${wpnRows}
+    ${capText?`<div class="ud-sep"></div><div class="ud-stitle">CAPACIDADES</div><div class="ud-dim">${capText}</div>`:''}
+    ${compText?`<div class="ud-sep"></div><div class="ud-stitle">COMPOSIÇÃO</div><div class="ud-dim">${compText}</div>`:''}
+    ${unit.notes?`<div class="ud-note">📝 ${unit.notes}</div>`:''}`;
+  el.classList.remove('hidden');
+  _renderUnitPreview($('ud-canvas'), unit, 110, 110);
+  el.style.visibility = 'hidden'; el.style.left = '0'; el.style.top = '0';
+  const ew = el.offsetWidth, eh = el.offsetHeight, m = 10;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let tx = screenX + m, ty = screenY + m;
+  if (tx + ew > vw - m) tx = screenX - ew - m;
+  if (ty + eh > vh - m) ty = Math.max(m, screenY - eh - m);
+  el.style.left = `${tx}px`; el.style.top = `${ty}px`; el.style.visibility = '';
+}
+
+function closeUnitDetail() { const el=$('unit-detail'); if(el) el.classList.add('hidden'); }
+
+// ─── Zoom / pan helpers ───────────────────────────────────────────────────────
+function clampPan() {
+  if (zoomLevel <= 1) { panX = 0; panY = 0; return; }
+  panX = Math.max(CVS_W * (1 - zoomLevel), Math.min(0, panX));
+  panY = Math.max(CVS_H * (1 - zoomLevel), Math.min(0, panY));
+}
+function zoomTo(level, pivotX = CVS_W / 2, pivotY = CVS_H / 2) {
+  const newZ = Math.max(Z_MIN, Math.min(Z_MAX, level));
+  panX = pivotX - (pivotX - panX) * (newZ / zoomLevel);
+  panY = pivotY - (pivotY - panY) * (newZ / zoomLevel);
+  zoomLevel = newZ; clampPan(); updateZoomLabel(); render();
+}
+function zoomIn()    { zoomTo(zoomLevel + Z_STEP); }
+function zoomOut()   { zoomTo(zoomLevel - Z_STEP); }
+function resetZoom() { zoomLevel = 1; panX = 0; panY = 0; updateZoomLabel(); render(); }
+function updateZoomLabel() {
+  const el = $('zoom-label');
+  if (el) el.textContent = `${Math.round(zoomLevel * 100)}%`;
+}
+
+// ─── Unit hit pulse animation ─────────────────────────────────────────────────
+function triggerUnitHit(unitId) {
+  _unitHits[unitId] = { endMs: Date.now() + 1400 };
+  if (_animRaf) return;
+  (function frame() {
+    render();
+    if (Object.values(_unitHits).some(h => Date.now() < h.endMs)) _animRaf = requestAnimationFrame(frame);
+    else { _unitHits = {}; _animRaf = null; }
+  })();
+}
+function drawHitAnimations() {
+  const now = Date.now();
+  for (const [uid, anim] of Object.entries(_unitHits)) {
+    if (now >= anim.endMs) continue;
+    const unit = gameState?.units.find(u => u.id === uid);
+    if (!unit) continue;
+    const {x, y} = hexToPixel(unit.col, unit.row);
+    const t = (anim.endMs - now) / 1400;
+    const pulse = Math.abs(Math.sin(t * Math.PI * 5));
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, HEX_R * (0.62 + 0.26 * (1 - t)), 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(255,50,50,${(pulse * 0.92).toFixed(2)})`;
+    ctx.lineWidth = 4 / zoomLevel;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ─── Phase flash overlay ──────────────────────────────────────────────────────
+function showPhaseFlash(text, color) {
+  const el = $('phase-flash');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = color;
+  el.style.borderColor = color + '99';
+  el.classList.remove('hidden', 'pf-in', 'pf-out');
+  void el.offsetWidth;
+  el.classList.add('pf-in');
+  clearTimeout(_phaseFlashTimer);
+  _phaseFlashTimer = setTimeout(() => {
+    el.classList.remove('pf-in');
+    el.classList.add('pf-out');
+    setTimeout(() => { el.classList.add('hidden'); el.classList.remove('pf-out'); }, 500);
+  }, 1800);
+}
+
 // ═══ RENDERING ════════════════════════════════════════════════════════════════
 function render() {
   if (!gameState) return;
   ctx.clearRect(0, 0, CVS_W, CVS_H);
+  ctx.save();
+  ctx.translate(panX, panY);
+  ctx.scale(zoomLevel, zoomLevel);
   drawBackground();
   drawHighlights();
   drawGrid();
   drawInfrastructure();
   drawUnits();
+  drawHitAnimations();
   drawCoordLabels();
   if (hoverHex) drawHover();
+  ctx.restore();
 }
 
 function drawBackground() {
@@ -817,6 +1199,21 @@ function drawHighlights() {
     drawHex(ctx,x,y,
       declared?'rgba(255,60,60,0.50)':'rgba(255,60,60,0.22)',
       declared?'rgba(255,120,120,1.0)':'rgba(255,80,80,0.75)',2.0);
+  }
+  // Facilitador: trilhas de movimentação durante aprovação
+  if (myRole === 'facilitator' && gameState.phase === 'movement_approval' && gameState.pendingPaths) {
+    for (const [unitId, path] of Object.entries(gameState.pendingPaths)) {
+      if (!Array.isArray(path) || path.length < 2) continue;
+      const unit = gameState.units.find(u => u.id === unitId && u.hp > 0);
+      if (!unit) continue;
+      const isBlue = unit.team === 'blue';
+      drawPathTrail(path,
+        isBlue ? 'rgba(130,177,255,0.18)' : 'rgba(255,138,128,0.18)',
+        isBlue ? 'rgba(130,177,255,0.55)' : 'rgba(255,138,128,0.55)',
+        isBlue ? 'rgba(130,177,255,0.35)' : 'rgba(255,138,128,0.35)',
+        isBlue ? 'rgba(130,177,255,0.85)' : 'rgba(255,138,128,0.85)',
+      );
+    }
   }
   // Destacar unidade selecionada para reposicionamento (facilitador)
   if (myRole === 'facilitator' && facRepoUnitId) {
@@ -1000,7 +1397,7 @@ function buildResultHtml(eng) {
     <div class="br-rolls">${rollsDesc}</div>
   </div>`;
 }
-function renderBrPanel({engagement,result,mustDecide,decisions,initiativeBonusTeam,counterResult}) {
+function renderBrPanel({engagement,result,mustDecide,decisions,initiativeBonusTeam,counterResult,facilitatorNote}) {
   brDecisionMade=false;
   const brLabel=`${engagement.id} · Battle Round ${engagement.battleRound}`;
   const singleRound=engagement.maxBattleRounds===1;
@@ -1038,6 +1435,9 @@ function renderBrPanel({engagement,result,mustDecide,decisions,initiativeBonusTe
     }
     html+=buildResultHtml(counterResult);
   }
+  if (facilitatorNote) {
+    html+=`<div class="br-row br-fac-note">${facilitatorNote}</div>`;
+  }
   $('br-panel-body').innerHTML=html;
   $('br-decision').classList.add('hidden');
   $('br-waiting').classList.add('hidden');
@@ -1049,5 +1449,8 @@ function renderBrPanel({engagement,result,mustDecide,decisions,initiativeBonusTe
     $('br-btn-ok').textContent=label;
     $('br-ok-area').classList.remove('hidden');
   }
-  $('br-panel').classList.remove('hidden');
+  const brEl = $('br-panel');
+  brEl.classList.remove('hidden', 'br-anim');
+  void brEl.offsetWidth;
+  brEl.classList.add('br-anim');
 }

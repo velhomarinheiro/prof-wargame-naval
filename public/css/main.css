@@ -98,6 +98,18 @@ h2 {
 }
 .hero-content h1 span { color: var(--gold); display: block; font-size: 1.1em; }
 
+.tagline-pro {
+  display: inline-block;
+  color: var(--gold);
+  letter-spacing: 5px;
+  font-size: 0.78rem;
+  font-weight: bold;
+  border: 1px solid rgba(201,168,76,0.5);
+  padding: 3px 16px;
+  margin-bottom: 0.6rem;
+  background: rgba(201,168,76,0.06);
+}
+
 .tagline {
   color: var(--text-dim);
   letter-spacing: 3px;
@@ -349,14 +361,21 @@ h2 {
   gap: 3px;
 }
 .btn-action small { font-size: 0.7rem; opacity: 0.7; letter-spacing: 1px; font-weight: normal; }
+.btn-action.gold  { background: #3a2800; border-color: var(--gold); color: var(--gold-l); }
+.btn-action.gold:hover  { background: #5a4200; box-shadow: 0 0 20px rgba(201,168,76,0.3); }
 .btn-action.blue  { background: #0d47a1; border-color: var(--blue-l); color: #fff; }
 .btn-action.blue:hover  { background: var(--blue); box-shadow: 0 0 20px rgba(33,150,243,0.3); }
 .btn-action.red   { background: #b71c1c; border-color: var(--red-l); color: #fff; }
 .btn-action.red:hover   { background: var(--red); box-shadow: 0 0 20px rgba(229,57,53,0.3); }
 .btn-icon { font-size: 1.3rem; }
-.lobby-or { margin: 1rem 0; color: var(--text-dim); }
+.lobby-or { margin: 1.25rem 0; color: var(--text-dim); font-size: 0.85rem; }
 
-.join-form { display: flex; flex-direction: column; gap: 0.75rem; }
+.join-code-row { margin-bottom: 0.75rem; }
+.join-teams-row { display: flex; gap: 0.75rem; }
+.join-teams-row .btn-action { flex: 1; }
+
+.step-fac  { border-color: var(--gold); color: var(--gold); font-size: 0.9rem; }
+.step-blue { border-color: var(--blue-l); color: var(--blue-l); }
 input[type=text] {
   background: rgba(10,30,50,0.9);
   border: 1px solid var(--border);
