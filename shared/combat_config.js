@@ -107,28 +107,25 @@ const COMBAT_CONFIG = {
   },
 
   // d6 damage tables  ─  "1d6" means roll a second d6 for damage
+    // d6 damage tables  ─  "1d6" means roll a second d6 for damage
+  // Calibrated: naval_salvo Bacia de Campos (SIGE 2026), η → faces, HP/s → dmg/hit
   damageTables: {
     blue: {
-      // η=0.85 → 5 faces; 2 SP/hit; roll=6 → critical (1d6)  E≈1.92 SP/míssil
       ascmSurface: {
-        surface:    { '1':0, '2':2, '3':2, '4':2, '5':2, '6':'1d6' },
+        surface:     { '1':0, '2':2, '3':2, '4':2, '5':2, '6':'1d6' },
       },
-      // η=0.85 → 5 faces; 1 SP/hit; roll=6 → critical (1d6)  E≈1.25 SP/míssil
       mssSurface: {
-        surface:    { '1':0, '2':1, '3':1, '4':1, '5':1, '6':'1d6' },
+        surface:     { '1':0, '2':1, '3':1, '4':1, '5':1, '6':'1d6' },
       },
-      // η=0.90 → 5 faces; 2 SP vs surface, 1 SP vs submarine  E≈1.92 / 1.25
       torpedo: {
-        surface:    { '1':0, '2':2, '3':2, '4':2, '5':2, '6':'1d6' },
-        submarine:  { '1':0, '2':1, '3':1, '4':1, '5':1, '6':'1d6' },
+        surface:     { '1':0, '2':2, '3':2, '4':2, '5':2, '6':'1d6' },
+        submarine:   { '1':0, '2':1, '3':1, '4':1, '5':1, '6':'1d6' },
       },
-      // η≈0.85 → 5 faces; 2 SP/hit; fixed land target  E≈1.92 SP/míssil
       lacm: {
-        land:       { '1':0, '2':2, '3':2, '4':2, '5':2, '6':'1d6' },
+        land:        { '1':0, '2':2, '3':2, '4':2, '5':2, '6':'1d6' },
       },
-      // η≈0.70 → 4 faces (targeting-chain penalty); 2 SP/hit  E≈1.58 SP/míssil
       asbmSurface: {
-        surface:    { '1':0, '2':0, '3':2, '4':2, '5':2, '6':'1d6' },
+        surface:     { '1':0, '2':0, '3':2, '4':2, '5':2, '6':'1d6' },
       },
       // unchanged: η≈0.60 → 4 faces vs surface, 3 vs land; 1 SP fixed
       navalGun: {
@@ -158,28 +155,26 @@ const COMBAT_CONFIG = {
     },
 
     red: {
-      // η=0.80 → 5 faces at d6 granularity (same as blue)
       ascmSurface: {
-        surface:    { '1':0, '2':2, '3':2, '4':2, '5':2, '6':'1d6' },
+        surface:     { '1':0, '2':2, '3':2, '4':2, '5':2, '6':'1d6' },
       },
       mssSurface: {
-        surface:    { '1':0, '2':1, '3':1, '4':1, '5':1, '6':'1d6' },
+        surface:     { '1':0, '2':1, '3':1, '4':1, '5':1, '6':'1d6' },
       },
       torpedo: {
-        surface:    { '1':0, '2':2, '3':2, '4':2, '5':2, '6':'1d6' },
-        submarine:  { '1':0, '2':1, '3':1, '4':1, '5':1, '6':'1d6' },
+        surface:     { '1':0, '2':2, '3':2, '4':2, '5':2, '6':'1d6' },
+        submarine:   { '1':0, '2':1, '3':1, '4':1, '5':1, '6':'1d6' },
       },
       lacm: {
-        land:       { '1':0, '2':2, '3':2, '4':2, '5':2, '6':'1d6' },
+        land:        { '1':0, '2':2, '3':2, '4':2, '5':2, '6':'1d6' },
       },
       asbmSurface: {
-        surface:    { '1':0, '2':0, '3':2, '4':2, '5':2, '6':'1d6' },
+        surface:     { '1':0, '2':0, '3':2, '4':2, '5':2, '6':'1d6' },
       },
       navalGun: {
         surface:    { '1':0, '2':0, '3':1, '4':1, '5':1, '6':1 },
         land:       { '1':0, '2':0, '3':0, '4':1, '5':1, '6':1 },
       },
-      // η=0.80 → 5 faces; same at d6 granularity
       airDefense: {
         air:        { '1':0, '2':1, '3':1, '4':1, '5':1, '6':1 },
         missile:    { '1':0, '2':1, '3':1, '4':1, '5':1, '6':1 },
