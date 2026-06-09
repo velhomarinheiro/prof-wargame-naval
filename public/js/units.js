@@ -24,6 +24,7 @@ const TYPE_ABBR = {
   fpso:             'FP',
   porto:            'PT',
   aeroporto:        'BA',
+  op_esp:           'OE',
 };
 
 // Legacy UNIT_DEFS kept for any code still referencing it
@@ -109,6 +110,7 @@ function drawPlatformSilhouette(ctx, type, cx, cy, sz, color) {
     case 'fpso':       drawFPSOShape(ctx, cx, cy, sz); break;
     case 'porto':      drawPortShape(ctx, cx, cy, sz); break;
     case 'aeroporto':  drawAirportShape(ctx, cx, cy, sz); break;
+    case 'op_esp':     drawOpEspShape(ctx, cx, cy, sz); break;
     default: drawShipShape(ctx, cx, cy, sz, 0.48, 0.52); break;
   }
 }
@@ -478,6 +480,20 @@ function drawAirportShape(ctx, cx, cy, sz) {
   ctx.fillRect(cx - sz * 0.44, cy - sz * 0.11, sz * 0.88, sz * 0.22);
   // Secondary runway (vertical)
   ctx.fillRect(cx - sz * 0.11, cy - sz * 0.44, sz * 0.22, sz * 0.88);
+}
+
+// Special Operations: star/crosshair symbol
+function drawOpEspShape(ctx, cx, cy, sz) {
+  ctx.lineWidth = Math.max(1.5, sz * 0.09);
+  // Crosshair lines
+  ctx.beginPath();
+  ctx.moveTo(cx - sz * 0.40, cy); ctx.lineTo(cx + sz * 0.40, cy);
+  ctx.moveTo(cx, cy - sz * 0.40); ctx.lineTo(cx, cy + sz * 0.40);
+  ctx.stroke();
+  // Central circle
+  ctx.beginPath();
+  ctx.arc(cx, cy, sz * 0.14, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────

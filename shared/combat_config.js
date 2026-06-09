@@ -104,6 +104,14 @@ const COMBAT_CONFIG = {
       damageProfile: 'airAttack',
       label: 'AT.AÉR',
     },
+    opEspSabotage: {
+      expendable: false,
+      defaultRange: 1,
+      targets: ['surface', 'land'],
+      interceptableBy: [],
+      damageProfile: 'opEspSabotage',
+      label: 'SABOTAGEM',
+    },
   },
 
   // d6 damage tables  ─  "1d6" means roll a second d6 for damage
@@ -152,6 +160,10 @@ const COMBAT_CONFIG = {
         air:        { '1':0, '2':0, '3':1, '4':1, '5':1, '6':'1d6' },
         land:       { '1':0, '2':0, '3':1, '4':1, '5':1, '6':'1d6' },
       },
+      opEspSabotage: {
+        surface:    { '1':0, '2':0, '3':1, '4':1, '5':1, '6':'1d6' },
+        land:       { '1':0, '2':0, '3':1, '4':1, '5':1, '6':'1d6' },
+      },
     },
 
     red: {
@@ -189,6 +201,10 @@ const COMBAT_CONFIG = {
       airAttack: {
         surface:    { '1':0, '2':0, '3':2, '4':2, '5':2, '6':'1d6' },
         air:        { '1':0, '2':0, '3':1, '4':1, '5':1, '6':'1d6' },
+        land:       { '1':0, '2':0, '3':1, '4':1, '5':1, '6':'1d6' },
+      },
+      opEspSabotage: {
+        surface:    { '1':0, '2':0, '3':1, '4':1, '5':1, '6':'1d6' },
         land:       { '1':0, '2':0, '3':1, '4':1, '5':1, '6':'1d6' },
       },
     },

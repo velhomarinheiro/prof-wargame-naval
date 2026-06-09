@@ -53,6 +53,7 @@ const COMP_DISPLAY_TYPE={
   'plataforma':'fpso','porto':'porto','aeroporto':'aeroporto',
   'navio_mercante':'logistico','apoio_offshore':'logistico','barco_pesqueiro':'patrulha_c',
   'veleiro':'patrulha_c','helicoptero_transporte':'helicoptero','aviacao_civil':'patrulha',
+  'op_esp':'op_esp',
 };
 const DISPLAY_TYPE_FALLBACK={surface:'fragata',submarine:'submarino',air:'patrulha',land:'corveta',neutral:'logistico'};
 
@@ -80,7 +81,12 @@ function filterLogForPlayer(log,team){
   const opp=team==='blue'?'red':'blue';
   const movePat=new RegExp(`\\(${opp}\\)\\s+→`);
   const fuelPat=new RegExp(`^[⛽✈].*\\(${opp}\\)`);
-  return (log||[]).filter(line=>!movePat.test(line)&&!fuelPat.test(line));
+  const hiddenPat=/^\[OCULTO:(blue|red)\]/;
+  return (log||[]).filter(line=>{
+    const hm=hiddenPat.exec(line);
+    if(hm) return hm[1]===team;
+    return !movePat.test(line)&&!fuelPat.test(line);
+  });
 }
 
 function stateFor(state,role){
@@ -119,7 +125,13 @@ function stateFor(state,role){
       if(night&&f.category!=='submarine') range-=2;
       return range>=1&&hexDist(f.col,f.row,neutral.col,neutral.row)<=range;
     });
-  }).map(n=>({...n,detected:true}));
+  }).map(n=>{
+    if(n.sofBoarding&&n.sofBoarding.controlledBy!==team){
+      const{sofBoarding:_,...rest}=n;
+      return{...rest,detected:true};
+    }
+    return{...n,detected:true};
+  });
 
   return{
     ...stateRest,
@@ -133,10 +145,10 @@ function stateFor(state,role){
 
 // ─── Weapon priority / combat helpers ────────────────────────────────────────
 const WEAPON_PRIORITY={
-  surface:['ascm','asbm','mss','torpedo','airAttack','navalGun'],
+  surface:['ascm','asbm','mss','torpedo','airAttack','navalGun','opEspSabotage'],
   submarine:['asw','torpedo'],
   air:['airDefense','airAttack'],
-  land:['lacm','airAttack','navalGun'],
+  land:['lacm','airAttack','navalGun','opEspSabotage'],
 };
 function selectBestWeapon(attacker,target,dist){
   const priority=WEAPON_PRIORITY[target.category]||[];
@@ -162,13 +174,72 @@ function makeUnit(team,spec){
     composition:spec.composition||[],movement:spec.movement,
     detectionRange:spec.detectionRange,attackRange:spec.attackRange,
     col:pos.col,row:pos.row,hp:spec.stayingPower,maxHp:spec.stayingPower,
-    stealthy:spec.category==='submarine',moved:false,weapons,
+    stealthy:spec.category==='submarine'||spec.subtype==='op_esp',moved:false,weapons,
     initWeapons:JSON.parse(JSON.stringify(weapons)),
     capabilities:spec.capabilities?{...spec.capabilities}:{},
     notes:spec.notes||'',
+    homeBaseId:null,
+    embarkUnitId:spec.embarkUnitId||null,
+    subtype:spec.subtype||null,
   };
   initializeFuel(unit);
   return unit;
+}
+
+function setAircraftHomeBases(state){
+  const baseTypes=new Set(['aeroporto','carrier']);
+  for(const unit of state.units){
+    if(unit.hp<=0||unit.category!=='air'||!['blue','red'].includes(unit.team)) continue;
+    const base=state.units.find(b=>b.team===unit.team&&b.hp>0&&baseTypes.has(b.type)&&b.col===unit.col&&b.row===unit.row);
+    if(base) unit.homeBaseId=base.id;
+  }
+}
+
+function returnAircraftToBases(state){
+  for(const unit of state.units){
+    if(unit.hp<=0||unit.category!=='air') continue;
+    if(!unit.homeBaseId) continue;
+    const base=state.units.find(b=>b.id===unit.homeBaseId);
+    if(!base||base.hp<=0){
+      unit.hp=0;
+      state.log.unshift(`✈ ${unit.name}(${unit.team}) perdida — base aérea destruída.`);
+      continue;
+    }
+    unit.col=base.col;
+    unit.row=base.row;
+    unit.fuel.wasAtRefuelLocation=true;
+  }
+}
+
+function checkSofBoarding(state){
+  for(const sof of state.units){
+    if(sof.hp<=0||sof.subtype!=='op_esp') continue;
+    const vessels=state.units.filter(v=>
+      v.team==='neutral'&&v.hp>0&&
+      v.col===sof.col&&v.row===sof.row&&
+      v.category==='surface'
+    );
+    for(const vessel of vessels){
+      if(vessel.sofBoarding){
+        if(vessel.sofBoarding.controlledBy===sof.team) continue;
+        const d6=Math.ceil(Math.random()*6);
+        const incumbent=vessel.sofBoarding;
+        if(d6>=4){
+          state.log.unshift(`[OCULTO:${sof.team}] 🎲 Abordagem por ${sof.name}: d6=${d6} — REPELIDO`);
+          state.log.unshift(`[OCULTO:${incumbent.controlledBy}] 🎲 Retomada tentada: d6=${d6} — CONTROLE MANTIDO`);
+        }else{
+          const oldSof=state.units.find(u=>u.id===incumbent.sofUnitId&&u.hp>0);
+          if(oldSof){oldSof.hp=0;state.log.unshift(`[OCULTO:${incumbent.controlledBy}] ⚫ ${oldSof.name} eliminada na retomada`);}
+          vessel.sofBoarding={controlledBy:sof.team,sofUnitId:sof.id};
+          state.log.unshift(`[OCULTO:${sof.team}] 🎲 Abordagem: d6=${d6} — CONTROLE DE ${vessel.name} OBTIDO`);
+          state.log.unshift(`[OCULTO:${incumbent.controlledBy}] 🎲 Embarcação retomada pelo adversário: d6=${d6}`);
+        }
+      }else{
+        vessel.sofBoarding={controlledBy:sof.team,sofUnitId:sof.id};
+        state.log.unshift(`[OCULTO:${sof.team}] 🔒 ${sof.name} abordou ${vessel.name} — controle oculto`);
+      }
+    }
+  }
 }
 
 let _unitSeed=1000;
@@ -200,6 +271,7 @@ function newGame(customOB){
   };
   saveMovementSnapshot(state);
   markRefuelEligibility(state);
+  setAircraftHomeBases(state);
   return state;
 }
 
@@ -214,7 +286,14 @@ function buildCombatQueue(state){
     const def=state.units.find(u=>u.id===atk.targetId&&u.hp>0);
     if(!att||!def) return null;
     const dist=hexDist(att.col,att.row,def.col,def.row);
-    const wpnType=selectBestWeapon(att,def,dist);
+    let wpnType=null;
+    if(atk.weaponType){
+      const p=COMBAT_CONFIG.weaponProfiles?.[atk.weaponType];
+      const q=getWeaponQuantity(att,atk.weaponType);
+      const r=getWeaponRange(att,atk.weaponType);
+      if(p&&q>0&&p.targets.includes(def.category)&&dist<=r) wpnType=atk.weaponType;
+    }
+    if(!wpnType) wpnType=selectBestWeapon(att,def,dist);
     if(!wpnType) return null;
     const profile=COMBAT_CONFIG.weaponProfiles?.[wpnType];
     const qty=getWeaponQuantity(att,wpnType);
@@ -376,6 +455,15 @@ function nextTurn(state){
       if(restored.length>0) state.log.unshift(`🔄 ${u.name} recompletou: ${restored.join(', ')}`);
     }
   }
+  returnAircraftToBases(state);
+  for(const u of state.units){
+    if(u.hp<=0||u.subtype!=='op_esp'||!u.embarkUnitId) continue;
+    const host=state.units.find(h=>h.id===u.embarkUnitId);
+    if(!host||host.hp<=0){
+      u.hp=0;
+      state.log.unshift(`⚫ ${u.name}(${u.team}) perdida — unidade transportadora afundada.`);
+    }
+  }
   const fuelReports=recoverNavalFuel(state);
   for(const{unit:u}of fuelReports) state.log.unshift(`⛽ ${u.name}(${u.team}) reabasteceu: ${u.fuel.current}/${u.fuel.max} FP.`);
   recoverAircraft(state);
@@ -504,7 +592,7 @@ io.on('connection',socket=>{
     // Validate
     for(const{unitId,path}of(moves||[])){
       if(!Array.isArray(path)||path.length<2) continue;
-      const unit=state.units.find(u=>u.id===unitId&&u.team===team&&u.hp>0);
+      const unit=state.units.find(u=>u.id===unitId&&u.hp>0&&(u.team===team||(u.team==='neutral'&&u.sofBoarding?.controlledBy===team)));
       if(!unit){socket.emit('action_error',`Unidade ${unitId} inválida.`);return;}
       if(unit.movement===0){socket.emit('action_error',`${unit.name}: unidade fixa.`);return;}
       if(isFuelDisabled(unit)){socket.emit('action_error',`${unit.name}: sem combustível.`);return;}
@@ -514,7 +602,7 @@ io.on('connection',socket=>{
         const{col,row}=path[i];
         if(col<0||col>=GRID_W||row<0||row>=GRID_H){socket.emit('action_error',`${unit.name}: fora do tabuleiro.`);return;}
         if(hexDist(path[i-1].col,path[i-1].row,col,row)!==1){socket.emit('action_error',`${unit.name}: passo não adjacente.`);return;}
-        if(!canEnterTerrain(unit.category,getTerrain(col,row))){socket.emit('action_error',`${unit.name}: terreno intransponível.`);return;}
+        if(!canEnterTerrain(unit.category,getTerrain(col,row))&&unit.subtype!=='op_esp'){socket.emit('action_error',`${unit.name}: terreno intransponível.`);return;}
       }
     }
 
@@ -522,15 +610,26 @@ io.on('connection',socket=>{
     const pp=state.pendingPaths=state.pendingPaths||{};
     for(const{unitId,path}of(moves||[])){
       if(!Array.isArray(path)||path.length<2) continue;
-      const unit=state.units.find(u=>u.id===unitId&&u.team===team&&u.hp>0);
+      const unit=state.units.find(u=>u.id===unitId&&u.hp>0&&(u.team===team||(u.team==='neutral'&&u.sofBoarding?.controlledBy===team)));
       if(!unit) continue;
       const dest=path[path.length-1];
       unit.col=dest.col;unit.row=dest.row;unit.moved=true;
       pp[unitId]=path;
-      state.log.unshift(`${unit.name}(${team}) → ${String.fromCharCode(65+dest.col)}${dest.row+1}`);
+      if(unit.team==='neutral'){
+        state.log.unshift(`[OCULTO:${team}] 🚢 ${unit.name} deslocado (controle oculto) → ${String.fromCharCode(65+dest.col)}${dest.row+1}`);
+      }else{
+        state.log.unshift(`${unit.name}(${team}) → ${String.fromCharCode(65+dest.col)}${dest.row+1}`);
+      }
       const dist=path.length-1;
       if(unit.category!=='air'){spendNavalFuel(unit,navalMoveCost(dist));}
-      else{unit.airStatus='airborne';spendAirFuel(unit,dist);if(isAirRefuelLocation(unit,state)) unit.fuel.wasAtRefuelLocation=true;}
+      else{
+        unit.airStatus='airborne';spendAirFuel(unit,dist);
+        if(isAirRefuelLocation(unit,state)){
+          unit.fuel.wasAtRefuelLocation=true;
+          const base=state.units.find(b=>b.team===unit.team&&b.hp>0&&(b.type==='aeroporto'||b.type==='carrier')&&b.col===unit.col&&b.row===unit.row);
+          if(base) unit.homeBaseId=base.id;
+        }
+      }
     }
 
     // Stationary fuel
@@ -544,6 +643,7 @@ io.on('connection',socket=>{
     if(team==='blue') state.blueDone=true;else state.redDone=true;
 
     if(state.blueDone&&state.redDone){
+      checkSofBoarding(state);
       // Fuel alerts
       const navalEmpty=checkNavalFuelZero(state);
       for(const u of navalEmpty){

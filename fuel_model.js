@@ -53,6 +53,7 @@ function isNavalRefuelProvider(unit) {
 function usesNavalFuel(unit) {
   if (isRedNucCarrier(unit) || isNuclearSub(unit)) return false;
   if (unit.type === 'fpso') return false;          // fixed offshore platform
+  if (unit.subtype === 'op_esp') return false;      // SOF teams are fuel-exempt
   if (unit.category === 'surface') return true;
   return isConventionalSub(unit);
 }

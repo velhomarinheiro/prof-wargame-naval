@@ -28,6 +28,10 @@ const terrainTip     = $('terrain-tip');
 const stackPicker    = $('stack-picker');
 const spList         = $('sp-list');
 const spGroupBtn     = $('sp-group-btn');
+const enemyStackPicker = $('enemy-stack-picker');
+const espList          = $('esp-list');
+const weaponPicker     = $('weapon-picker');
+const wpList           = $('wp-list');
 
 // ─── Canvas setup ─────────────────────────────────────────────────────────────
 canvas.width  = CVS_W;
@@ -63,6 +67,55 @@ let _tooltipTimer = null, _tooltipUnitId = null;
 
 // ─── Socket ───────────────────────────────────────────────────────────────────
 const socket = io();
+
+// Client-side weapon profile info (mirrors combat_config.js)
+const WEAPON_INFO = {
+  ascm:          { targets: ['surface'],               label: 'ASCM',      expendable: true  },
+  mss:           { targets: ['surface'],               label: 'MSS',       expendable: true  },
+  torpedo:       { targets: ['surface','submarine'],   label: 'TORPEDO',   expendable: true  },
+  lacm:          { targets: ['land'],                  label: 'LACM',      expendable: true  },
+  asbm:          { targets: ['surface'],               label: 'ASBM',      expendable: true  },
+  navalGun:      { targets: ['surface','land'],        label: 'CANHÃO',    expendable: false },
+  airDefense:    { targets: ['air'],                   label: 'DEFA',      expendable: false },
+  bmd:           { targets: ['air'],                   label: 'BMD',       expendable: false },
+  asw:           { targets: ['submarine'],             label: 'ASW',       expendable: false },
+  airAttack:     { targets: ['surface','air','land'],  label: 'AT.AÉR',    expendable: false },
+  opEspSabotage: { targets: ['surface','land'],        label: 'SABOTAGEM', expendable: false },
+};
+const WEAPON_RANGE = {
+  ascm:10, mss:3, torpedo:2, lacm:10, asbm:10,
+  navalGun:1, airDefense:1, bmd:1, asw:2, airAttack:4, opEspSabotage:1,
+};
+const SALVO_DEFAULTS = { ascm:2, mss:2, torpedo:1, lacm:1, asbm:1 };
+
+function getAvailableWeapons(attacker, targetCategory, dist) {
+  const result = [];
+  if (!attacker) return result;
+  const weapons = attacker.weapons || {};
+  const caps    = attacker.capabilities || {};
+  // Expendable weapons
+  for (const [wpnType, wpnData] of Object.entries(weapons)) {
+    if ((wpnData.quantity || 0) <= 0) continue;
+    const info = WEAPON_INFO[wpnType];
+    if (!info) continue;
+    if (!info.targets.includes(targetCategory)) continue;
+    const range = wpnData.range || WEAPON_RANGE[wpnType] || 1;
+    if (dist > range) continue;
+    result.push({ type: wpnType, label: info.label, qty: wpnData.quantity, expendable: true });
+  }
+  // Non-expendable capabilities
+  for (const [capType, capVal] of Object.entries(caps)) {
+    if ((capVal || 0) <= 0) continue;
+    if (weapons[capType]) continue;
+    const info = WEAPON_INFO[capType];
+    if (!info) continue;
+    if (!info.targets.includes(targetCategory)) continue;
+    const range = WEAPON_RANGE[capType] || 1;
+    if (dist > range) continue;
+    result.push({ type: capType, label: info.label, qty: capVal, expendable: false });
+  }
+  return result;
+}
 
 function rangeAgainst(rangeTable, targetCategory) {
   if (!rangeTable) return 0;
@@ -114,7 +167,7 @@ socket.on('game_start', ({ role, state }) => {
   myRole = role;
   gameState = state;
   selUnitId = null; selGroupIds = []; moveHexes = []; atkHexes = []; pendingAtks = [];
-  activePath = []; plannedMoves.clear(); hideStackPicker();
+  activePath = []; plannedMoves.clear(); hideStackPicker(); hideEnemyStackPicker(); hideWeaponPicker();
   closeBrPanel();
   lobbyScreen.classList.add('hidden');
   configScreen.classList.add('hidden');
@@ -402,20 +455,45 @@ if (cancelBtn)   cancelBtn.addEventListener('click',   () => { hideStackPicker()
 $('btn-restart')?.addEventListener('click', () => { socket.emit('restart'); gameOver.classList.add('hidden'); });
 $('br-btn-continue')?.addEventListener('click', () => sendBrDecision('continue'));
 $('br-btn-stop')?.addEventListener('click',     () => sendBrDecision('stop'));
+$('wp-cancel-btn')?.addEventListener('click', () => hideWeaponPicker());
 $('br-btn-ok')?.addEventListener('click',       () => onBrOk());
 $('btn-back')?.addEventListener('click',        () => location.reload());
 
 $('unit-panel')?.addEventListener('click', e => {
-  const btn = e.target.closest('[data-atk-adj]');
-  if (!btn) return;
-  const attackerId = btn.dataset.attacker;
-  const targetId   = btn.dataset.target;
-  const delta      = Number(btn.dataset.atk_adj);
-  const atk = pendingAtks.find(a => a.attackerId === attackerId && a.targetId === targetId);
-  if (!atk) return;
-  const maxAmt = Number(btn.dataset.max) || 4;
-  atk.amount = Math.max(1, Math.min(maxAmt, (atk.amount || 1) + delta));
-  updateUI(); render();
+  const adjBtn = e.target.closest('[data-atk-adj]');
+  if (adjBtn) {
+    const attackerId = adjBtn.dataset.attacker;
+    const targetId   = adjBtn.dataset.target;
+    const delta      = Number(adjBtn.dataset.atk_adj);
+    const atk = pendingAtks.find(a => a.attackerId === attackerId && a.targetId === targetId);
+    if (!atk) return;
+    const maxAmt = Number(adjBtn.dataset.max) || 4;
+    atk.amount = Math.max(1, Math.min(maxAmt, (atk.amount || 1) + delta));
+    updateUI(); render(); return;
+  }
+  const wpnBtn = e.target.closest('[data-atk-wpn]');
+  if (wpnBtn) {
+    const attackerId = wpnBtn.dataset.attacker;
+    const targetId   = wpnBtn.dataset.target;
+    const delta      = Number(wpnBtn.dataset.delta);
+    const atk = pendingAtks.find(a => a.attackerId === attackerId && a.targetId === targetId);
+    if (!atk) return;
+    const attUnit = gameState?.units.find(u => u.id === attackerId && u.hp > 0);
+    const tgtUnit = gameState?.units.find(u => u.id === targetId && u.hp > 0);
+    if (!attUnit || !tgtUnit) return;
+    const dist = hexDist(attUnit.col, attUnit.row, tgtUnit.col, tgtUnit.row);
+    const avail = getAvailableWeapons(attUnit, tgtUnit.category, dist);
+    if (avail.length <= 1) return;
+    const curIdx = avail.findIndex(w => w.type === atk.weaponType);
+    const nxtIdx = ((curIdx === -1 ? 0 : curIdx) + delta + avail.length) % avail.length;
+    atk.weaponType = avail[nxtIdx].type;
+    const wpnInfo = WEAPON_INFO[atk.weaponType];
+    if (wpnInfo?.expendable) {
+      const maxQ = attUnit.weapons?.[atk.weaponType]?.quantity || 1;
+      atk.amount = Math.min(atk.amount || 1, maxQ);
+    }
+    updateUI(); render(); return;
+  }
 });
 
 // ─── Canvas input ─────────────────────────────────────────────────────────────
@@ -597,35 +675,24 @@ function handleClick(col, row) {
 
   // Jogadores
   const {phase} = gameState;
-  if (!stackPicker.classList.contains('hidden')) { hideStackPicker(); return; }
+  if (!stackPicker.classList.contains('hidden'))      { hideStackPicker();      return; }
+  if (!enemyStackPicker.classList.contains('hidden')) { hideEnemyStackPicker(); return; }
+  if (!weaponPicker.classList.contains('hidden'))     { hideWeaponPicker();     return; }
 
   if (phase === 'movement_approval' || phase === 'combat_approval') return; // aguardando facilitador
 
   if (phase === 'combat') {
     if (isMyTurn() && selUnitId !== null) {
-      const atk = atkHexes.find(h => h.col === col && h.row === row);
-      if (atk) {
-        if (selGroupIds.length > 0) {
-          const allDeclared = selGroupIds.every(id => pendingAtks.some(a => a.attackerId === id && a.targetId === atk.unitId));
-          if (allDeclared) {
-            pendingAtks = pendingAtks.filter(a => !(selGroupIds.includes(a.attackerId) && a.targetId === atk.unitId));
-          } else {
-            for (const id of selGroupIds) {
-              const gu = gameState.units.find(u => u.id === id && u.hp > 0);
-              if (!gu) continue;
-              if (rangeAgainst(gu.attackRange, atk.category) >= 1 &&
-                  hexDist(gu.col, gu.row, atk.col, atk.row) <= rangeAgainst(gu.attackRange, atk.category) &&
-                  !pendingAtks.some(a => a.attackerId === id && a.targetId === atk.unitId)) {
-                pendingAtks.push({ attackerId: id, targetId: atk.unitId, amount: 1 });
-              }
-            }
-          }
-        } else {
-          const idx = pendingAtks.findIndex(a => a.attackerId === selUnitId && a.targetId === atk.unitId);
-          if (idx >= 0) pendingAtks.splice(idx, 1);
-          else pendingAtks.push({ attackerId: selUnitId, targetId: atk.unitId, amount: 1 });
+      const allAtk = atkHexes.filter(h => h.col === col && h.row === row);
+      if (allAtk.length > 0) {
+        hideWeaponPicker(); hideEnemyStackPicker();
+        if (allAtk.length > 1) {
+          const enemyUnits = allAtk.map(h => gameState.units.find(u => u.id === h.unitId && u.hp > 0)).filter(Boolean);
+          const unique = enemyUnits.filter((u, i, arr) => arr.findIndex(x => x.id === u.id) === i);
+          if (unique.length > 1) { showEnemyStackPicker(col, row, unique); return; }
         }
-        updateUI(); render(); return;
+        handleAttackDeclaration(col, row, allAtk[0].unitId, allAtk[0].category);
+        return;
       }
     }
     const ownUnits = gameState.units.filter(u => u.col === col && u.row === row && u.hp > 0 && u.team === myRole);
@@ -701,7 +768,7 @@ function recalcHighlightsGroup(units) {
       const inPath  = new Set(activePath.map(h => `${h.col},${h.row}`));
       moveHexes = hexNeighbors(lastHex.col, lastHex.row).filter(nb => {
         if (inPath.has(`${nb.col},${nb.row}`)) return false;
-        return units.every(u => canEnterTerrain(u.category, TERRAIN_MAP[nb.row][nb.col]));
+        return units.every(u => u.subtype === 'op_esp' || canEnterTerrain(u.category, TERRAIN_MAP[nb.row][nb.col]));
       });
     } else { moveHexes = []; }
   } else { moveHexes = []; }
@@ -740,6 +807,83 @@ function showStackPicker(col, row, units) {
 }
 
 function hideStackPicker() { stackPicker.classList.add('hidden'); }
+
+function showEnemyStackPicker(col, row, units) {
+  espList.innerHTML = '';
+  for (const u of units) {
+    const btn = document.createElement('button');
+    btn.className = 'sp-unit-btn';
+    const c = u.team === 'blue' ? 'var(--blue-l)' : 'var(--red-l)';
+    btn.innerHTML = `<span style="color:${c}">${u.name}</span> · ${u.hp}/${u.maxHp}SP`;
+    btn.addEventListener('click', () => { hideEnemyStackPicker(); handleAttackDeclaration(col, row, u.id, u.category); });
+    espList.appendChild(btn);
+  }
+  const {x, y} = hexToPixel(col, row);
+  const rect = canvas.getBoundingClientRect();
+  const wrap = canvas.parentElement.getBoundingClientRect();
+  const scale = rect.width / canvas.width;
+  const sx = rect.left - wrap.left + x * scale;
+  const sy = rect.top  - wrap.top  + (y + HEX_R) * scale + 6;
+  enemyStackPicker.style.left = `${Math.round(sx - 85)}px`;
+  enemyStackPicker.style.top  = `${Math.round(sy)}px`;
+  enemyStackPicker.classList.remove('hidden');
+}
+function hideEnemyStackPicker() { enemyStackPicker.classList.add('hidden'); }
+
+function showWeaponPicker(col, row, attackerId, targetId, weapons) {
+  wpList.innerHTML = '';
+  for (const w of weapons) {
+    const btn = document.createElement('button');
+    btn.className = 'sp-unit-btn';
+    const qtyStr = w.expendable ? ` (${w.qty} disp.)` : ' (∞)';
+    btn.textContent = `${w.label}${qtyStr}`;
+    btn.addEventListener('click', () => { hideWeaponPicker(); commitAttackDeclaration(attackerId, targetId, w.type); });
+    wpList.appendChild(btn);
+  }
+  const {x, y} = hexToPixel(col, row);
+  const rect = canvas.getBoundingClientRect();
+  const wrap = canvas.parentElement.getBoundingClientRect();
+  const scale = rect.width / canvas.width;
+  const sx = rect.left - wrap.left + x * scale;
+  const sy = rect.top  - wrap.top  + (y + HEX_R) * scale + 6;
+  weaponPicker.style.left = `${Math.round(sx - 85)}px`;
+  weaponPicker.style.top  = `${Math.round(sy)}px`;
+  weaponPicker.classList.remove('hidden');
+}
+function hideWeaponPicker() { weaponPicker.classList.add('hidden'); }
+
+function commitAttackDeclaration(attackerId, targetId, weaponType) {
+  const idx = pendingAtks.findIndex(a => a.attackerId === attackerId && a.targetId === targetId);
+  if (idx >= 0) { pendingAtks.splice(idx, 1); updateUI(); render(); return; }
+  const attUnit = gameState?.units.find(u => u.id === attackerId && u.hp > 0);
+  const wpnData = attUnit?.weapons?.[weaponType];
+  const maxQty  = wpnData?.quantity ?? (attUnit?.capabilities?.[weaponType] || 1);
+  const amount  = Math.min(maxQty, SALVO_DEFAULTS[weaponType] || 1);
+  pendingAtks.push({ attackerId, targetId, amount, weaponType });
+  updateUI(); render();
+}
+
+function handleAttackDeclaration(col, row, targetId, targetCategory) {
+  const attackerIds = selGroupIds.length > 0 ? selGroupIds : (selUnitId ? [selUnitId] : []);
+  for (const attackerId of attackerIds) {
+    const attUnit = gameState?.units.find(u => u.id === attackerId && u.hp > 0);
+    const tgtUnit = gameState?.units.find(u => u.id === targetId && u.hp > 0);
+    if (!attUnit || !tgtUnit) continue;
+    const dist = hexDist(attUnit.col, attUnit.row, tgtUnit.col, tgtUnit.row);
+    if (dist > rangeAgainst(attUnit.attackRange, targetCategory)) continue;
+    // Toggle existing attack off
+    const existingIdx = pendingAtks.findIndex(a => a.attackerId === attackerId && a.targetId === targetId);
+    if (existingIdx >= 0) { pendingAtks.splice(existingIdx, 1); continue; }
+    const avail = getAvailableWeapons(attUnit, targetCategory, dist);
+    if (avail.length === 0) continue;
+    if (avail.length === 1 || selGroupIds.length > 1) {
+      commitAttackDeclaration(attackerId, targetId, avail[0].type);
+    } else {
+      showWeaponPicker(col, row, attackerId, targetId, avail);
+    }
+  }
+  updateUI(); render();
+}
 
 function _selectUnit(unit) {
   selGroupIds = [];
@@ -780,6 +924,7 @@ function recalcHighlights(unit) {
       const inPath  = new Set(activePath.map(h => `${h.col},${h.row}`));
       moveHexes = hexNeighbors(lastHex.col, lastHex.row).filter(nb => {
         if (inPath.has(`${nb.col},${nb.row}`)) return false;
+        if (unit.subtype === 'op_esp') return true;
         return canEnterTerrain(unit.category, TERRAIN_MAP[nb.row][nb.col]);
       });
     } else { moveHexes = []; }
@@ -789,6 +934,10 @@ function recalcHighlights(unit) {
     atkHexes = [];
     const enemies = gameState.units.filter(u => u.team !== myRole && u.team !== 'neutral' && u.hp > 0 && u.detected);
     for (const e of enemies) {
+      if (unit.subtype === 'op_esp') {
+        const isInfra = e.composition?.some(c => ['plataforma','porto','aeroporto'].includes(c.type));
+        if (!isInfra) continue;
+      }
       if (hexDist(unit.col, unit.row, e.col, e.row) <= rangeAgainst(unit.attackRange, e.category)) {
         atkHexes.push({ col: e.col, row: e.row, unitId: e.id, category: e.category });
       }
@@ -950,18 +1099,33 @@ function fuelRow(unit) {
 function buildAtkListHtml(atks) {
   if (!atks.length) return '';
   const items = atks.map(a => {
-    const tgt    = gameState?.units.find(u => u.id === a.targetId);
-    const tgtName= tgt?.name || a.targetId;
-    const attUnit= gameState?.units.find(u => u.id === a.attackerId);
-    const maxAmt = attUnit ? Math.max(1, ...Object.values(attUnit.weapons||{}).map(w=>w.quantity||0)) : 4;
-    const amt    = a.amount || 1;
+    const tgt     = gameState?.units.find(u => u.id === a.targetId);
+    const tgtName = tgt?.name || a.targetId;
+    const attUnit = gameState?.units.find(u => u.id === a.attackerId);
+    const wpnInfo = WEAPON_INFO[a.weaponType];
+    const wpnLabel = wpnInfo?.label || (a.weaponType?.toUpperCase() || '?');
+    const wpnQty  = (a.weaponType && attUnit?.weapons?.[a.weaponType]?.quantity)
+      ?? (a.weaponType && attUnit?.capabilities?.[a.weaponType]) ?? 4;
+    const maxAmt  = wpnInfo?.expendable ? (wpnQty || 1) : 1;
+    const amt     = Math.min(a.amount || 1, maxAmt);
+    const tgtCat  = tgt?.category || 'surface';
+    const dist    = (attUnit && tgt) ? hexDist(attUnit.col, attUnit.row, tgt.col, tgt.row) : 0;
+    const availLen = attUnit ? getAvailableWeapons(attUnit, tgtCat, dist).length : 1;
+    const cycleBtns = availLen > 1
+      ? `<span class="atk-wpn-cycle">
+           <button class="atk-adj-btn" data-atk-wpn data-attacker="${a.attackerId}" data-target="${a.targetId}" data-delta="-1">◀</button>
+           <span class="atk-wpn-lbl">${wpnLabel}</span>
+           <button class="atk-adj-btn" data-atk-wpn data-attacker="${a.attackerId}" data-target="${a.targetId}" data-delta="1">▶</button>
+         </span>`
+      : `<span class="atk-wpn-lbl-fixed">${wpnLabel}</span>`;
     return `<div class="atk-entry">
       <span class="atk-target">→ ${tgtName}</span>
-      <span class="atk-amt-ctrl">
+      ${cycleBtns}
+      ${wpnInfo?.expendable !== false ? `<span class="atk-amt-ctrl">
         <button class="atk-adj-btn" data-atk-adj data-attacker="${a.attackerId}" data-target="${a.targetId}" data-atk_adj="-1" data-max="${maxAmt}">−</button>
         <span class="atk-amt-val">${amt}</span>
         <button class="atk-adj-btn" data-atk-adj data-attacker="${a.attackerId}" data-target="${a.targetId}" data-atk_adj="1" data-max="${maxAmt}">+</button>
-      </span>
+      </span>` : ''}
     </div>`;
   }).join('');
   return `<div class="atk-list"><div class="atk-list-title">Ataques declarados:</div>${items}</div>`;
