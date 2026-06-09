@@ -3,6 +3,13 @@
 Generates synthetic game logs using the full Order of Battle from
 shared/order_of_battle.js — all units, weapons and capabilities.
 
+Mechanics modelled:
+  - Aircraft movement limits (PATMAR 12/10, PAC 7/6, APAER 5, AWACS 8)
+  - Aircraft return to homeBase + full resupply after each combat phase
+  - Carrier-sunk: all Red carrier-based aircraft destroyed at next turn start
+  - SOF teams (BLUE-OPSESP-1, RED-OPSESP-1/2): terrain bypass, sabotage weapon,
+    embarked on host; host sunk → SOF destroyed at next turn start
+
 Usage:
     python ml/simulate_games.py --n 120
 """
@@ -53,7 +60,8 @@ def hex_dist(c1,r1,c2,r2):
     a=oddq_to_cube(c1,r1); b=oddq_to_cube(c2,r2)
     return max(abs(a[0]-b[0]),abs(a[1]-b[1]),abs(a[2]-b[2]))
 
-def can_enter(category, col, row):
+def can_enter(category, col, row, terrain_bypass=False):
+    if terrain_bypass: return True
     t = get_terrain(col, row)
     if category in ('air','neutral_air'): return True
     if category == 'land':       return t in (0,1)
@@ -81,6 +89,8 @@ DAMAGE_TABLES = {
         'airAttack':    {'surface':  {1:0,2:0,3:2,4:2,5:2,6:'1d6'},
                          'air':      {1:0,2:0,3:1,4:1,5:1,6:'1d6'},
                          'land':     {1:0,2:0,3:1,4:1,5:1,6:'1d6'}},
+        'sabotage':     {'surface':  {1:0,2:1,3:1,4:1,5:2,6:2},
+                         'land':     {1:0,2:1,3:1,4:1,5:2,6:2}},
     }
     for t in ('blue','red')
 }
@@ -106,13 +116,15 @@ WEAPON_PROFILES = {
                   'interceptableBy':[], 'damageProfile':'asw'},
     'airAttack': {'expendable':False, 'defaultRange':4,  'targets':['surface','air','land'],
                   'interceptableBy':['airDefense'], 'damageProfile':'airAttack'},
+    'sabotage':  {'expendable':False, 'defaultRange':1,  'targets':['surface','land'],
+                  'interceptableBy':[], 'damageProfile':'sabotage'},
 }
 
 WEAPON_PRIORITY = {
-    'surface':   ['ascm','asbm','mss','torpedo','airAttack','navalGun'],
+    'surface':   ['ascm','asbm','mss','torpedo','airAttack','navalGun','sabotage'],
     'submarine': ['asw','torpedo'],
     'air':       ['airDefense','airAttack'],
-    'land':      ['lacm','airAttack','navalGun'],
+    'land':      ['lacm','airAttack','navalGun','sabotage'],
 }
 SALVO_SIZE = {'ascm':2,'mss':2,'torpedo':1,'lacm':1,'asbm':1}
 
@@ -160,7 +172,7 @@ def resolve_interception(defender, incoming_wpn, launched):
             if dmg > 0: intercepted += 1
         remaining = max(0, remaining - intercepted)
         if remaining <= 0: break
-    return remaining   # missiles that bypassed interception
+    return remaining
 
 def select_weapon(attacker, target, dist):
     for wpn in WEAPON_PRIORITY.get(target['category'],[]):
@@ -302,45 +314,58 @@ BLUE_OB = [
    'attackRange':{'surface':2,'air':0,'submarine':1,'land':0},
    'weapons':{'mss':{'quantity':2,'range':2},'torpedo':{'quantity':6,'range':2}},
    'capabilities':{'asw':1},'position':{'col':4,'row':4}},
-  # ── Aviation ─────────────────────────────────────────────────────────────────
+  # ── SOF ──────────────────────────────────────────────────────────────────────
+  {'id':'BLUE-OPSESP-1','name':'Op Esp 1','category':'surface',
+   'stayingPower':2,'movement':4,
+   'detectionRange':{'surface':1,'air':0,'submarine':0,'land':1},
+   'attackRange':{'surface':1,'air':0,'submarine':0,'land':1},
+   'weapons':{'sabotage':{'quantity':99,'range':1}},
+   'capabilities':{},
+   'position':{'col':4,'row':4},
+   'isSof':True,'embarkedOn':'BLUE-SUB-3'},
+  # ── Aviation (home bases assigned; movement limits updated) ──────────────────
   {'id':'BLUE-MPRA-1','name':'PATMAR1','category':'air',
-   'stayingPower':2,'movement':16,
+   'stayingPower':2,'movement':12,
    'detectionRange':{'surface':4,'air':1,'submarine':1,'land':2},
    'attackRange':{'surface':3,'air':0,'submarine':1,'land':0},
    'weapons':{'mss':{'quantity':4,'range':2},'torpedo':{'quantity':2,'range':2}},
-   'capabilities':{'asw':2,'airAttack':2},'position':{'col':1,'row':3}},
+   'capabilities':{'asw':2,'airAttack':2},
+   'homeBaseId':'BLUE-AERO-SP','position':{'col':1,'row':3}},
   {'id':'BLUE-MPRA-2','name':'PATMAR2','category':'air',
-   'stayingPower':2,'movement':16,
+   'stayingPower':2,'movement':12,
    'detectionRange':{'surface':4,'air':1,'submarine':1,'land':2},
    'attackRange':{'surface':3,'air':0,'submarine':1,'land':0},
    'weapons':{'mss':{'quantity':4,'range':2},'torpedo':{'quantity':2,'range':2}},
-   'capabilities':{'asw':2,'airAttack':2},'position':{'col':1,'row':3}},
+   'capabilities':{'asw':2,'airAttack':2},
+   'homeBaseId':'BLUE-AERO-SP','position':{'col':1,'row':3}},
   {'id':'BLUE-CACA-1','name':'PAC1','category':'air',
-   'stayingPower':6,'movement':8,
+   'stayingPower':6,'movement':7,
    'detectionRange':{'surface':2,'air':2,'submarine':0,'land':1},
    'attackRange':{'surface':0,'air':2,'submarine':0,'land':0},
    'weapons':{},'capabilities':{'airDefense':6,'airAttack':6},
-   'position':{'col':0,'row':3}},
+   'homeBaseId':'BLUE-AERO-RJ','position':{'col':0,'row':3}},
   {'id':'BLUE-CACA-2','name':'PAC2','category':'air',
-   'stayingPower':6,'movement':8,
+   'stayingPower':6,'movement':7,
    'detectionRange':{'surface':2,'air':2,'submarine':0,'land':1},
    'attackRange':{'surface':0,'air':2,'submarine':0,'land':0},
    'weapons':{},'capabilities':{'airDefense':6,'airAttack':6},
-   'position':{'col':0,'row':3}},
+   'homeBaseId':'BLUE-AERO-RJ','position':{'col':0,'row':3}},
   {'id':'BLUE-CJAT-1','name':'APAER1','category':'air',
-   'stayingPower':2,'movement':6,
+   'stayingPower':2,'movement':5,
    'detectionRange':{'surface':2,'air':1,'submarine':0,'land':1},
    'attackRange':{'surface':1,'air':1,'submarine':0,'land':1},
    'weapons':{'ascm':{'quantity':4,'range':6},'mss':{'quantity':2,'range':2},
               'lacm':{'quantity':2,'range':10}},
-   'capabilities':{'airAttack':2},'position':{'col':3,'row':3}},
+   'capabilities':{'airAttack':2},
+   'homeBaseId':'BLUE-AERO-CF','position':{'col':2,'row':3}},
   {'id':'BLUE-CJAT-2','name':'APAER2','category':'air',
-   'stayingPower':2,'movement':6,
+   'stayingPower':2,'movement':5,
    'detectionRange':{'surface':2,'air':1,'submarine':0,'land':1},
    'attackRange':{'surface':1,'air':1,'submarine':0,'land':1},
    'weapons':{'ascm':{'quantity':4,'range':6},'mss':{'quantity':2,'range':2},
               'lacm':{'quantity':2,'range':10}},
-   'capabilities':{'airAttack':2},'position':{'col':3,'row':3}},
+   'capabilities':{'airAttack':2},
+   'homeBaseId':'BLUE-AERO-CF','position':{'col':2,'row':3}},
   # ── Land combat ──────────────────────────────────────────────────────────────
   {'id':'BLUE-DCOST1','name':'DEFCOST1','category':'land',
    'stayingPower':2,'movement':1,
@@ -480,43 +505,63 @@ RED_OB = [
    'attackRange':{'surface':2,'air':0,'submarine':1,'land':0},
    'weapons':{'ascm':{'quantity':4,'range':6},'torpedo':{'quantity':6,'range':2}},
    'capabilities':{'asw':1},'position':{'col':1,'row':8}},
-  # ── Aviation ─────────────────────────────────────────────────────────────────
+  # ── SOF ──────────────────────────────────────────────────────────────────────
+  {'id':'RED-OPSESP-1','name':'Op Esp V1','category':'surface',
+   'stayingPower':2,'movement':4,
+   'detectionRange':{'surface':1,'air':0,'submarine':0,'land':1},
+   'attackRange':{'surface':1,'air':0,'submarine':0,'land':1},
+   'weapons':{'sabotage':{'quantity':99,'range':1}},
+   'capabilities':{},
+   'position':{'col':15,'row':1},
+   'isSof':True,'embarkedOn':'RED-GBPA'},
+  {'id':'RED-OPSESP-2','name':'Op Esp V2','category':'surface',
+   'stayingPower':2,'movement':4,
+   'detectionRange':{'surface':1,'air':0,'submarine':0,'land':1},
+   'attackRange':{'surface':1,'air':0,'submarine':0,'land':1},
+   'weapons':{'sabotage':{'quantity':99,'range':1}},
+   'capabilities':{},
+   'position':{'col':1,'row':8},
+   'isSof':True,'embarkedOn':'RED-KS-1'},
+  # ── Aviation (home base = carrier; movement limits updated) ──────────────────
   {'id':'RED-KMF-1','name':'PAC1','category':'air',
-   'stayingPower':8,'movement':10,
+   'stayingPower':8,'movement':6,
    'detectionRange':{'surface':2,'air':2,'submarine':0,'land':1},
    'attackRange':{'surface':2,'air':2,'submarine':0,'land':1},
    'weapons':{},'capabilities':{'airDefense':8,'airAttack':8},
-   'position':{'col':15,'row':1}},
+   'homeBaseId':'RED-GBPA','position':{'col':15,'row':1}},
   {'id':'RED-KMF-2','name':'PAC2','category':'air',
-   'stayingPower':8,'movement':10,
+   'stayingPower':8,'movement':6,
    'detectionRange':{'surface':2,'air':2,'submarine':0,'land':1},
    'attackRange':{'surface':2,'air':2,'submarine':0,'land':1},
    'weapons':{},'capabilities':{'airDefense':8,'airAttack':8},
-   'position':{'col':15,'row':1}},
+   'homeBaseId':'RED-GBPA','position':{'col':15,'row':1}},
   {'id':'RED-MPRA-K1','name':'PATMAR1','category':'air',
-   'stayingPower':2,'movement':12,
-   'detectionRange':{'surface':3,'air':1,'submarine':2,'land':1},
-   'attackRange':{'surface':2,'air':0,'submarine':1,'land':0},
-   'weapons':{'ascm':{'quantity':2,'range':6},'mss':{'quantity':2,'range':2},
-              'torpedo':{'quantity':2,'range':2}},
-   'capabilities':{'asw':2,'airAttack':2},'position':{'col':15,'row':1}},
-  {'id':'RED-MPRA-K2','name':'PATMAR2','category':'air',
-   'stayingPower':2,'movement':12,
-   'detectionRange':{'surface':3,'air':1,'submarine':2,'land':1},
-   'attackRange':{'surface':2,'air':0,'submarine':1,'land':0},
-   'weapons':{'ascm':{'quantity':2,'range':6},'mss':{'quantity':2,'range':2},
-              'torpedo':{'quantity':2,'range':2}},
-   'capabilities':{'asw':2,'airAttack':2},'position':{'col':15,'row':1}},
-  {'id':'RED-AWACS-K','name':'AWACS','category':'air',
    'stayingPower':2,'movement':10,
+   'detectionRange':{'surface':3,'air':1,'submarine':2,'land':1},
+   'attackRange':{'surface':2,'air':0,'submarine':1,'land':0},
+   'weapons':{'ascm':{'quantity':2,'range':6},'mss':{'quantity':2,'range':2},
+              'torpedo':{'quantity':2,'range':2}},
+   'capabilities':{'asw':2,'airAttack':2},
+   'homeBaseId':'RED-GBPA','position':{'col':15,'row':1}},
+  {'id':'RED-MPRA-K2','name':'PATMAR2','category':'air',
+   'stayingPower':2,'movement':10,
+   'detectionRange':{'surface':3,'air':1,'submarine':2,'land':1},
+   'attackRange':{'surface':2,'air':0,'submarine':1,'land':0},
+   'weapons':{'ascm':{'quantity':2,'range':6},'mss':{'quantity':2,'range':2},
+              'torpedo':{'quantity':2,'range':2}},
+   'capabilities':{'asw':2,'airAttack':2},
+   'homeBaseId':'RED-GBPA','position':{'col':15,'row':1}},
+  {'id':'RED-AWACS-K','name':'AWACS','category':'air',
+   'stayingPower':2,'movement':8,
    'detectionRange':{'surface':3,'air':4,'submarine':0,'land':1},
    'attackRange':{'surface':0,'air':0,'submarine':0,'land':0},
-   'weapons':{},'capabilities':{},'position':{'col':15,'row':1}},
+   'weapons':{},'capabilities':{},
+   'homeBaseId':'RED-GBPA','position':{'col':15,'row':1}},
 ]
 
 def make_unit(spec, team):
     pos = spec.get('position', {'col':0,'row':0})
-    return {
+    unit = {
         'id': spec['id'], 'name': spec['name'], 'team': team,
         'category': spec['category'],
         'col': pos['col'], 'row': pos['row'],
@@ -527,12 +572,28 @@ def make_unit(spec, team):
         'attackRange':  dict(spec.get('attackRange',{})),
         'detectionRange': dict(spec.get('detectionRange',{})),
     }
+    if spec['category'] == 'air':
+        unit['homeBaseId'] = spec.get('homeBaseId', '')
+        unit['baseWeapons'] = {k: v['quantity'] for k,v in spec.get('weapons',{}).items()}
+    if spec.get('isSof', False):
+        unit['isSof'] = True
+        unit['embarkedOn'] = spec.get('embarkedOn', '')
+    return unit
 
 # ─── Bot strategies ────────────────────────────────────────────────────────────
 def bot_move(unit, enemies, allies, strategy='aggressive'):
     if unit.get('movement',0) == 0: return unit['col'], unit['row']
+
+    # Embarked SOF follows host
+    if unit.get('embarkedOn'):
+        host = next((a for a in allies if a['id']==unit['embarkedOn'] and a.get('hp',0)>0), None)
+        if host:
+            return host['col'], host['row']
+        # Host gone — disembark in place
+        unit['embarkedOn'] = ''
+
+    bypass = unit.get('isSof', False)
     live_en = [e for e in enemies if e.get('hp',0)>0 and has_offense(e)]
-    # non-offensive support: also consider unarmed targets (FPSOs etc.) for red
     if not live_en:
         live_en = [e for e in enemies if e.get('hp',0)>0]
     if not live_en: return unit['col'], unit['row']
@@ -552,13 +613,12 @@ def bot_move(unit, enemies, allies, strategy='aggressive'):
     if best_range > 0 and td <= max(1, best_range-1):
         return col, row
 
-    # Multi-step BFS toward target
     cur_col, cur_row = col, row
     for _ in range(unit.get('movement',1)):
         bc, br = cur_col, cur_row
         bd = hex_dist(cur_col, cur_row, target['col'], target['row'])
         for nc, nr in hex_neighbors(cur_col, cur_row):
-            if not can_enter(unit['category'], nc, nr): continue
+            if not can_enter(unit['category'], nc, nr, bypass): continue
             d = hex_dist(nc, nr, target['col'], target['row'])
             if d < bd: bd = d; bc, br = nc, nr
         if bc == cur_col and br == cur_row: break
@@ -589,6 +649,54 @@ def check_winner(units):
     if not r: return 'blue'
     return None
 
+# ─── Aircraft RTB + resupply ──────────────────────────────────────────────────
+def aircraft_rtb(units, events, room, turn_num, period, now):
+    unit_map = {u['id']: u for u in units}
+    for u in units:
+        if u['category'] != 'air' or u.get('hp',0) <= 0: return_to = None; continue
+        home_id = u.get('homeBaseId','')
+        if not home_id: continue
+        home = unit_map.get(home_id)
+        if not home or home.get('hp',0) <= 0: continue
+        u['col'] = home['col']
+        u['row'] = home['row']
+        for wpn, qty in u.get('baseWeapons',{}).items():
+            if wpn in u['weapons']:
+                u['weapons'][wpn]['quantity'] = qty
+
+# ─── Turn-start: destroy orphaned aircraft and SOF ───────────────────────────
+def apply_orphan_deaths(units, events, room, turn_num, period, now):
+    unit_map = {u['id']: u for u in units}
+    for u in units:
+        if u.get('hp',0) <= 0: continue
+        # Aircraft whose carrier was sunk last turn
+        if u['category'] == 'air' and u.get('carrierSunk'):
+            u['hp'] = 0
+            u.pop('carrierSunk', None)
+            events.append({'event':'engagement_resolved','room':room,
+                           'attackerId':'__carrier_sunk__','targetId':u['id'],
+                           'weapon':'carrier_sunk','launched':0,'intercepted':0,
+                           'damage':u['maxHp'],'destroyed':True,'targetHpAfter':0,'ts':now()})
+        # SOF still embarked on a dead host
+        if u.get('isSof') and u.get('embarkedOn'):
+            host = unit_map.get(u['embarkedOn'])
+            if host and host.get('hp',0) <= 0:
+                u['hp'] = 0
+                u['embarkedOn'] = ''
+                events.append({'event':'engagement_resolved','room':room,
+                               'attackerId':'__host_sunk__','targetId':u['id'],
+                               'weapon':'host_sunk','launched':0,'intercepted':0,
+                               'damage':u['maxHp'],'destroyed':True,'targetHpAfter':0,'ts':now()})
+
+# ─── SOF deploy decision (called during movement phase) ─────────────────────
+def sof_maybe_deploy(unit, allies, enemies):
+    if not unit.get('isSof') or not unit.get('embarkedOn'): return
+    for enemy in enemies:
+        if enemy.get('hp',0) <= 0: continue
+        if hex_dist(unit['col'],unit['row'],enemy['col'],enemy['row']) <= 3:
+            unit['embarkedOn'] = ''
+            return
+
 # ─── Game simulation ──────────────────────────────────────────────────────────
 def simulate_game(game_id, max_turns=30, seed=None):
     if seed is not None: random.seed(seed)
@@ -600,19 +708,20 @@ def simulate_game(game_id, max_turns=30, seed=None):
     units = ([make_unit(s,'blue') for s in BLUE_OB] +
              [make_unit(s,'red')  for s in RED_OB])
 
-    # Slight starting position jitter for variety
     for u in units:
-        if u['movement'] == 0: continue
+        if u['movement'] == 0 or u.get('isSof'): continue
         for _ in range(3):
             nc = u['col'] + random.randint(-1,1)
             nr = u['row'] + random.randint(-1,1)
-            if 0<=nc<GRID_W and 0<=nr<GRID_H and can_enter(u['category'],nc,nr):
+            bypass = u.get('isSof', False)
+            if 0<=nc<GRID_W and 0<=nr<GRID_H and can_enter(u['category'],nc,nr,bypass):
                 u['col'], u['row'] = nc, nr; break
 
     blue_strat = random.choice(['aggressive','aggressive','defensive','flanking'])
     red_strat  = random.choice(['aggressive','aggressive','defensive','flanking'])
 
-    events.append({'event':'game_start','room':f'SIM{game_id:04d}',
+    room = f'SIM{game_id:04d}'
+    events.append({'event':'game_start','room':room,
                    'turn':1,'period':'day',
                    'units':[dict(u) for u in units],'ts':now()})
 
@@ -622,6 +731,17 @@ def simulate_game(game_id, max_turns=30, seed=None):
     for t in range(max_turns):
         turn_num = t//2+1
         period   = 'day' if t%2==0 else 'night'
+
+        # ── Turn start: orphan cleanup ────────────────────────────────────────
+        apply_orphan_deaths(units, events, room, turn_num, period, now)
+
+        # ── SOF: decide to deploy ─────────────────────────────────────────────
+        unit_map = {u['id']: u for u in units}
+        for u in units:
+            if u.get('isSof') and u.get('hp',0) > 0:
+                en = [x for x in units if x['team']!=u['team'] and x.get('hp',0)>0]
+                al = [x for x in units if x['team']==u['team'] and x.get('hp',0)>0]
+                sof_maybe_deploy(u, al, en)
 
         # ── Movement ──────────────────────────────────────────────────────────
         for team, strat in (('blue',blue_strat),('red',red_strat)):
@@ -636,14 +756,14 @@ def simulate_game(game_id, max_turns=30, seed=None):
                               'to':  {'col':nc,'row':nr}})
                 unit['col'],unit['row'] = nc,nr
                 unit['moved'] = (nc!=oc or nr!=or_)
-            events.append({'event':'movement_committed','room':f'SIM{game_id:04d}',
+            events.append({'event':'movement_committed','room':room,
                            'team':team,'turn':turn_num,'period':period,
                            'moves':moves,'units':[dict(u) for u in units],'ts':now()})
 
         # ── Combat ────────────────────────────────────────────────────────────
         blue_atk = bot_declare_attacks('blue', units)
         red_atk  = bot_declare_attacks('red',  units)
-        events.append({'event':'attacks_declared','room':f'SIM{game_id:04d}',
+        events.append({'event':'attacks_declared','room':room,
                        'turn':turn_num,'period':period,
                        'blueAttacks':blue_atk,'redAttacks':red_atk,
                        'units':[dict(u) for u in units],'ts':now()})
@@ -651,24 +771,35 @@ def simulate_game(game_id, max_turns=30, seed=None):
         unit_map = {u['id']:u for u in units}
         all_atk  = blue_atk + red_atk
         random.shuffle(all_atk)
+        csg_was_alive = unit_map.get('RED-GBPA',{}).get('hp',0) > 0
         for atk in all_atk:
             att = unit_map.get(atk['attackerId'])
             tgt = unit_map.get(atk['targetId'])
             if not att or not tgt or att.get('hp',0)<=0 or tgt.get('hp',0)<=0:
                 continue
             result = resolve_engagement(att, tgt)
-            events.append({'event':'engagement_resolved','room':f'SIM{game_id:04d}',
+            events.append({'event':'engagement_resolved','room':room,
                            'attackerId':att['id'],'targetId':tgt['id'],
                            'weapon':result['weapon'],
                            'launched':result['launched'],'intercepted':result['intercepted'],
                            'damage':result['total_damage'],'destroyed':result['destroyed'],
                            'targetHpAfter':tgt['hp'],'ts':now()})
 
+        # ── Post-combat: carrier death marks orphaned aircraft ────────────────
+        csg = unit_map.get('RED-GBPA')
+        if csg_was_alive and csg and csg.get('hp',0) == 0:
+            for u in units:
+                if u['category'] == 'air' and u.get('homeBaseId') == 'RED-GBPA':
+                    u['carrierSunk'] = True
+
+        # ── Aircraft RTB + resupply ───────────────────────────────────────────
+        aircraft_rtb(units, events, room, turn_num, period, now)
+
         winner = check_winner(units)
         if winner: break
         for u in units: u['moved'] = False
 
-    events.append({'event':'game_over','room':f'SIM{game_id:04d}',
+    events.append({'event':'game_over','room':room,
                    'winner':winner or 'draw','turn':turn_num,'period':period,
                    'units':[dict(u) for u in units],'ts':now()})
 
@@ -681,8 +812,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--n', type=int, default=120)
     args = parser.parse_args()
+    blue_total = len(BLUE_OB)
+    red_total  = len(RED_OB)
     print(f"=== Operação Atlântico Sul — OB Completo ({args.n} partidas) ===")
-    print(f"Azul: {len(BLUE_OB)} unidades  |  Vermelho: {len(RED_OB)} unidades\n")
+    print(f"Azul: {blue_total} unidades  |  Vermelho: {red_total} unidades\n")
     results = {}
     for i in range(args.n):
         winner, _ = simulate_game(i, seed=i)
