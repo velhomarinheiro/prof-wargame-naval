@@ -55,6 +55,11 @@ let activePath   = [];
 let plannedMoves = new Map();
 let selGroupIds  = [];
 
+// ─── Guerra Cibernética: estado do jogador ───────────────────────────────────
+let cyberQueue        = [];   // { cardId, effectId, targetType, targetId, targetLabel, justification, secret }
+let cyberTargetingCard = null; // carta ofensiva aguardando seleção de alvo no mapa
+let cyberDefenseActive = new Set(); // ids de cartas defensivas marcadas para ativar
+
 // ─── Zoom / pan state ────────────────────────────────────────────────────────
 let zoomLevel = 1.0, panX = 0, panY = 0;
 let _dragOrigin = null, _dragging = false;
@@ -174,7 +179,8 @@ socket.on('game_start', ({ role, state }) => {
   $('waiting-screen').classList.add('hidden');
   gameScreen.classList.remove('hidden');
   gameOver.classList.add('hidden');
-  if (myRole === 'facilitator') setupFacilitatorUI();
+  if (myRole === 'facilitator') { setupFacilitatorUI(); facRenderCyberPanel(state); }
+  else renderCyberPanel();
   updateUI(); render();
 });
 
@@ -202,6 +208,8 @@ socket.on('game_update', state => {
       movement:          [`⚡ TURNO ${state.turn} · MOVIMENTAÇÃO`, '#82b1ff'],
       movement_approval: ['✔ MOVIMENTOS CONCLUÍDOS',      '#ffd54f'],
       combat_approval:   ['📋 COMBATE RESOLVIDO',          '#a5d6a7'],
+      cyber:             [`🛡 TURNO ${state.turn} · GUERRA CIBERNÉTICA`, '#ce93d8'],
+      cyber_approval:    ['🛡 OPERAÇÕES CIBERNÉTICAS DECLARADAS', '#ce93d8'],
     };
     const f = PF[state.phase];
     if (f) showPhaseFlash(f[0], f[1]);
@@ -234,12 +242,21 @@ socket.on('game_update', state => {
     facRenderMessages(state.messages || []);
     facRenderUnitManager(state);
     facRenderLog(state);
+    facRenderCyberPanel(state);
   }
 
   // Aprovação de combate: abre painel automaticamente
   if (myRole === 'facilitator' && state.phase === 'combat_approval') {
     facShowCombatApproval(state);
   }
+
+  // Aprovação cibernética: abre painel automaticamente
+  if (myRole === 'facilitator' && state.phase === 'cyber_approval') {
+    facShowCyberApproval(state);
+  }
+
+  // Jogador: atualiza painel de Guerra Cibernética
+  if (myRole !== 'facilitator') renderCyberPanel();
 
   updateUI(); render();
 });
@@ -262,6 +279,18 @@ socket.on('combat_approval_needed', state => {
     facShowCombatApproval(state);
     facRenderUnitManager(state);
     facRenderLog(state);
+  }
+  updateUI(); render();
+});
+
+// Facilitador: aprovação de operações cibernéticas solicitada
+socket.on('cyber_approval_needed', state => {
+  gameState = state;
+  if (myRole === 'facilitator') {
+    facShowCyberApproval(state);
+    facRenderUnitManager(state);
+    facRenderLog(state);
+    facRenderCyberPanel(state);
   }
   updateUI(); render();
 });
@@ -679,7 +708,12 @@ function handleClick(col, row) {
   if (!enemyStackPicker.classList.contains('hidden')) { hideEnemyStackPicker(); return; }
   if (!weaponPicker.classList.contains('hidden'))     { hideWeaponPicker();     return; }
 
-  if (phase === 'movement_approval' || phase === 'combat_approval') return; // aguardando facilitador
+  if (phase === 'movement_approval' || phase === 'combat_approval' || phase === 'cyber_approval') return; // aguardando facilitador
+
+  if (phase === 'cyber') {
+    if (cyberTargetingCard) handleCyberTargetClick(col, row);
+    return;
+  }
 
   if (phase === 'combat') {
     if (isMyTurn() && selUnitId !== null) {
@@ -970,6 +1004,8 @@ function updateUI() {
   periodLabel.textContent= period === 'day' ? '☀ Diurno' : '🌙 Noturno';
 
   const phaseLabels = {
+    cyber: 'Guerra Cibernética',
+    cyber_approval: 'Avaliação Cibernética',
     movement: 'Movimentação',
     movement_approval: 'Aprovação de Movimentos',
     combat: 'Combate',
@@ -979,8 +1015,12 @@ function updateUI() {
 
   myTurnBanner.classList.toggle('visible', isMyTurn() && !winner);
 
+  // Painel de Guerra Cibernética: visível apenas para jogadores na fase 'cyber'
+  const cyberPanelEl = $('cyber-panel');
+  if (cyberPanelEl) cyberPanelEl.classList.toggle('hidden', myRole === 'facilitator' || phase !== 'cyber');
+
   // Esconder botões de ação para facilitador e para fases de aprovação
-  const isApprovalPhase = phase === 'movement_approval' || phase === 'combat_approval';
+  const isApprovalPhase = phase === 'movement_approval' || phase === 'combat_approval' || phase === 'cyber_approval';
   if (endPhaseBtn) endPhaseBtn.classList.add('hidden');
   if (combatBtn)   combatBtn.classList.add('hidden');
   if (undoStepBtn) undoStepBtn.classList.add('hidden');
@@ -1004,6 +1044,8 @@ function updateUI() {
     if (isApprovalPhase) {
       waitBanner.textContent = phase === 'movement_approval'
         ? '⌛ Aguardando aprovação do Facilitador (movimentos)...'
+        : phase === 'cyber_approval'
+        ? '⌛ Aguardando avaliação do Facilitador (guerra cibernética)...'
         : '⌛ Aguardando aprovação do Facilitador (combate)...';
     }
   }
@@ -1617,4 +1659,173 @@ function renderBrPanel({engagement,result,mustDecide,decisions,initiativeBonusTe
   brEl.classList.remove('hidden', 'br-anim');
   void brEl.offsetWidth;
   brEl.classList.add('br-anim');
+}
+
+// ─── Guerra Cibernética: painel do jogador ───────────────────────────────────
+function cyberEnemyTeam() { return myRole === 'blue' ? 'red' : 'blue'; }
+function cyberEnemyTeamLabel() { return myRole === 'blue' ? 'Força Vermelha' : 'Força Azul'; }
+
+function cyberUseCard(cardId) {
+  if (!gameState) return;
+  const hand = gameState.cyber?.[myRole];
+  const card = hand?.offensiveCards.find(c => c.id === cardId);
+  if (!card || card.used) return;
+  if (cyberQueue.some(op => op.cardId === cardId)) return; // já na fila
+  const effectDef = CYBER_EFFECTS[card.effectId];
+  if (!effectDef) return;
+
+  if (effectDef.targetType === 'team') {
+    cyberQueue.push({
+      cardId: card.id, effectId: card.effectId, targetType: 'team',
+      targetId: cyberEnemyTeam(), targetLabel: cyberEnemyTeamLabel(),
+      justification: '', secret: false,
+    });
+    cyberTargetingCard = null;
+    renderCyberPanel();
+    return;
+  }
+
+  cyberTargetingCard = card;
+  renderCyberPanel();
+}
+
+function cyberCancelTargeting() {
+  cyberTargetingCard = null;
+  renderCyberPanel();
+}
+
+function handleCyberTargetClick(col, row) {
+  const card = cyberTargetingCard;
+  if (!card || !gameState) return;
+  const effectDef = CYBER_EFFECTS[card.effectId];
+  if (!effectDef) return;
+  const enemyTeam = cyberEnemyTeam();
+  const target = gameState.units.find(u => u.col === col && u.row === row && u.hp > 0 && u.team === enemyTeam && !u.isFakeContact);
+  if (!target) { flashError('Selecione uma unidade inimiga detectada.'); return; }
+  if (effectDef.targetType === 'infrastructure' && !INFRA_TYPES.includes(target.type)) {
+    flashError('Selecione uma infraestrutura (porto, base, etc.) inimiga.');
+    return;
+  }
+  cyberQueue.push({
+    cardId: card.id, effectId: card.effectId, targetType: effectDef.targetType,
+    targetId: target.id, targetLabel: target.name, justification: '', secret: false,
+  });
+  cyberTargetingCard = null;
+  renderCyberPanel();
+}
+
+function cyberRemoveQueueItem(idx) {
+  cyberQueue.splice(idx, 1);
+  renderCyberPanel();
+}
+
+function cyberUpdateJustification(idx, value) {
+  if (cyberQueue[idx]) cyberQueue[idx].justification = value.slice(0, 300);
+}
+
+function cyberToggleSecret(idx, checked) {
+  if (cyberQueue[idx]) cyberQueue[idx].secret = checked;
+}
+
+function cyberToggleDefense(cardId, checked) {
+  if (checked) cyberDefenseActive.add(cardId); else cyberDefenseActive.delete(cardId);
+}
+
+function cyberSubmit() {
+  const operations = cyberQueue.map(op => ({
+    cardId: op.cardId, effectId: op.effectId, targetId: op.targetId,
+    justification: op.justification, secret: op.secret,
+  }));
+  socket.emit('cyber_submit', { operations, defenseCardIds: [...cyberDefenseActive] });
+  cyberQueue = []; cyberTargetingCard = null; cyberDefenseActive.clear();
+}
+
+function renderCyberPanel() {
+  if (myRole === 'facilitator' || !gameState) return;
+  const statusEl  = $('cyber-status');
+  const contentEl = $('cyber-content');
+  if (!statusEl || !contentEl) return;
+
+  const cyber = gameState.cyber;
+  const hand  = cyber?.[myRole];
+  if (!hand) { statusEl.textContent = ''; contentEl.innerHTML = ''; return; }
+
+  if (gameState.phase !== 'cyber') {
+    statusEl.textContent = '';
+    contentEl.innerHTML = '';
+    return;
+  }
+
+  if (hand.submitted) {
+    statusEl.innerHTML = '✔ Operações cibernéticas declaradas. Aguardando o oponente / Facilitador...';
+    contentEl.innerHTML = '';
+    return;
+  }
+
+  const usedCount = hand.offensiveCards.filter(c => c.used || cyberQueue.some(op => op.cardId === c.id)).length;
+  statusEl.innerHTML = `Cartas ofensivas usadas: ${usedCount}/${hand.offensiveCards.length}`;
+
+  let html = '';
+
+  if (cyberTargetingCard) {
+    const effectDef = CYBER_EFFECTS[cyberTargetingCard.effectId];
+    html += `<div class="cyber-targeting-hint">
+      🎯 Selecione no mapa o alvo para "${escHtml(effectDef?.name || '')}".
+      <button class="fac-small-btn" style="margin-top:4px" onclick="cyberCancelTargeting()">Cancelar</button>
+    </div>`;
+  }
+
+  // Operações na fila
+  if (cyberQueue.length > 0) {
+    html += '<div class="cyber-section-title">Operações na Fila</div>';
+    cyberQueue.forEach((op, idx) => {
+      const effectDef = CYBER_EFFECTS[op.effectId];
+      html += `<div class="cyber-queue-item">
+        <div class="cyq-row">
+          <span><b>${escHtml(effectDef?.name || op.effectId)}</b> → ${escHtml(op.targetLabel)}</span>
+          <button class="fac-small-btn red" onclick="cyberRemoveQueueItem(${idx})">✕</button>
+        </div>
+        <textarea class="fac-input fac-input-sm" rows="2" placeholder="Justificativa (opcional)..."
+          onchange="cyberUpdateJustification(${idx}, this.value)">${escHtml(op.justification || '')}</textarea>
+        <label class="cyber-def-row"><input type="checkbox" ${op.secret ? 'checked' : ''}
+          onchange="cyberToggleSecret(${idx}, this.checked)"> Operação Secreta</label>
+      </div>`;
+    });
+  }
+
+  // Cartas ofensivas
+  html += '<div class="cyber-section-title">Cartas Ofensivas</div>';
+  hand.offensiveCards.forEach(card => {
+    const effectDef = CYBER_EFFECTS[card.effectId];
+    if (!effectDef) return;
+    const queued = cyberQueue.some(op => op.cardId === card.id);
+    const disabled = card.used || queued;
+    html += `<div class="cyber-card${disabled ? ' used' : ''}">
+      <div class="cyber-card-name">${escHtml(effectDef.name)}</div>
+      <div class="cyber-card-badges">
+        <span class="cyber-badge lvl-${effectDef.level}">${escHtml(CYBER_LEVEL_LABELS[effectDef.level] || '')}</span>
+        <span class="cyber-badge">${escHtml(CYBER_CATEGORY_LABELS[effectDef.category] || '')}</span>
+      </div>
+      <div class="cyber-card-desc">${escHtml(effectDef.description)}</div>
+      ${disabled ? '' : `<button class="act-btn blue fac-small-btn cyber-card-btn" onclick="cyberUseCard('${card.id}')">Usar</button>`}
+      ${queued ? '<div class="cyber-card-desc">Na fila para envio.</div>' : ''}
+      ${card.used && !queued ? '<div class="cyber-card-desc">Já utilizada.</div>' : ''}
+    </div>`;
+  });
+
+  // Cartas defensivas
+  html += '<div class="cyber-section-title">Cartas Defensivas (este turno)</div>';
+  hand.defensiveCards.forEach(card => {
+    const effectDef = CYBER_DEFENSE_EFFECTS[card.effectId];
+    if (!effectDef) return;
+    html += `<label class="cyber-def-row">
+      <input type="checkbox" ${cyberDefenseActive.has(card.id) ? 'checked' : ''}
+        onchange="cyberToggleDefense('${card.id}', this.checked)">
+      <span class="cyber-card-desc"><b>${escHtml(effectDef.name)}</b> — ${escHtml(effectDef.description)}</span>
+    </label>`;
+  });
+
+  html += `<button class="act-btn yellow cyber-submit-btn" onclick="cyberSubmit()">✔ Concluir Fase Cibernética</button>`;
+
+  contentEl.innerHTML = html;
 }

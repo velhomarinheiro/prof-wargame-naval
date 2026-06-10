@@ -272,6 +272,180 @@ function facApproveCombat() {
   document.getElementById('fac-approval-panel').classList.add('hidden');
 }
 
+// ─── GUERRA CIBERNÉTICA: APROVAÇÃO DE OPERAÇÕES ───────────────────────────────
+
+function facShowCyberApproval(state) {
+  document.getElementById('fac-approval-panel').classList.remove('hidden');
+  document.getElementById('fac-approval-title').textContent = 'GUERRA CIBERNÉTICA — AVALIAÇÃO';
+  const body = document.getElementById('fac-approval-body');
+  const ops  = state.cyber?.pendingOperations || [];
+
+  if (ops.length === 0) {
+    body.innerHTML = '<p class="fac-dim">Nenhuma operação pendente.</p>';
+  } else {
+    const renderGroup = (team, label) => {
+      const teamOps = ops.filter(o => o.attackerTeam === team);
+      if (teamOps.length === 0) return '';
+      return `<div class="fac-cyber-sub">${label}</div>` +
+        teamOps.map(op => facRenderCyberOpCard(op, state)).join('');
+    };
+    body.innerHTML = renderGroup('blue', 'Operações Azul') + renderGroup('red', 'Operações Vermelho');
+  }
+
+  const btn = document.getElementById('fac-approve-btn');
+  btn.textContent = '✔ CONCLUIR FASE CIBERNÉTICA';
+  btn.onclick = facFinishCyberPhase;
+}
+
+function facRenderCyberOpCard(op, state) {
+  const effectDef = CYBER_EFFECTS[op.effectId];
+  const target = op.targetType === 'team'
+    ? (op.defenderTeam === 'blue' ? 'Força Azul' : 'Força Vermelha')
+    : (state.units.find(u => u.id === op.targetId)?.name || op.targetId);
+  const secretTag = op.secret ? ' · 🔒 Operação Secreta' : '';
+  const msgField = effectDef?.kind === 'message'
+    ? `<textarea class="fac-input fac-input-sm" rows="2" placeholder="Mensagem ao alvo..." id="fcm-${op.id}"></textarea>`
+    : '';
+  return `<div class="fac-cyber-op" data-opid="${op.id}">
+    <div class="fac-cyber-op-header">${escHtml(effectDef?.name || op.effectId)}
+      <span class="fac-dim">(${escHtml(CYBER_LEVEL_LABELS[effectDef?.level] || '')})</span></div>
+    <div class="fac-cyber-op-meta">
+      Alvo: ${escHtml(target)}${secretTag}<br>
+      Sugestão do sistema: Chance ${op.suggestedChance}% — ${escHtml(RESULT_LABELS[op.suggestedResult])}
+      ${op.justification ? `<br>Justificativa: ${escHtml(op.justification)}` : ''}
+    </div>
+    ${msgField}
+    <div class="fac-cyber-op-actions">
+      <select id="fcr-${op.id}">
+        <option value="fail" ${op.suggestedResult === 'fail' ? 'selected' : ''}>Falha</option>
+        <option value="partial" ${op.suggestedResult === 'partial' ? 'selected' : ''}>Sucesso Parcial</option>
+        <option value="success" ${op.suggestedResult === 'success' ? 'selected' : ''}>Sucesso</option>
+        <option value="critical" ${op.suggestedResult === 'critical' ? 'selected' : ''}>Sucesso Crítico</option>
+      </select>
+      <button class="act-btn green fac-small-btn" onclick="facResolveCyberOp('${op.id}')">Aplicar</button>
+      <button class="act-btn red fac-small-btn" onclick="facRejectCyberOp('${op.id}')">Rejeitar</button>
+    </div>
+  </div>`;
+}
+
+function facResolveCyberOp(opId) {
+  const select = document.getElementById(`fcr-${opId}`);
+  const result = select ? select.value : undefined;
+  const msgEl  = document.getElementById(`fcm-${opId}`);
+  const messageText = msgEl ? msgEl.value : undefined;
+  socket.emit('cyber_resolve_op', { opId, result, messageText });
+}
+
+function facRejectCyberOp(opId) {
+  socket.emit('cyber_resolve_op', { opId, result: 'fail' });
+}
+
+function facFinishCyberPhase() {
+  socket.emit('cyber_finish_phase');
+  document.getElementById('fac-approval-panel').classList.add('hidden');
+}
+
+// ─── GUERRA CIBERNÉTICA: PAINEL PERSISTENTE (efeitos / histórico / evento) ────
+
+function facRenderCyberPanel(state) {
+  const cyber = state?.cyber;
+  if (!cyber) return;
+
+  const effectsEl = document.getElementById('fac-cyber-effects');
+  if (effectsEl) {
+    const effects = cyber.activeEffects || [];
+    effectsEl.innerHTML = effects.length === 0
+      ? '<p class="fac-dim">Nenhum efeito ativo.</p>'
+      : effects.map(eff => {
+          const tc = eff.affectedTeam === 'blue' ? 'fac-blue' : 'fac-red';
+          const target = eff.scope === 'team'
+            ? (eff.affectedTeam === 'blue' ? 'Força Azul' : 'Força Vermelha')
+            : (state.units.find(u => u.id === eff.targetId)?.name || eff.targetId);
+          const mods = Object.entries(eff.modifiers || {}).map(([k, v]) => `${k}:${v > 0 ? '+' : ''}${v}`).join(', ');
+          return `<div class="fac-cyber-effect">
+            <span class="${tc}">${escHtml(eff.name)}</span> → ${escHtml(target)}
+            <span class="fac-dim"> (${escHtml(mods)} · ${eff.turnsRemaining}t restante(s))</span>
+          </div>`;
+        }).join('');
+  }
+
+  const historyEl = document.getElementById('fac-cyber-history');
+  if (historyEl) {
+    const hist = cyber.history || [];
+    historyEl.innerHTML = hist.length === 0
+      ? '<p class="fac-dim">Sem registros.</p>'
+      : hist.slice().reverse().slice(0, 30).map(h => {
+          const tc = h.attacker === 'blue' ? 'fac-blue' : 'fac-red';
+          const targetLabel = state.units.find(u => u.id === h.target)?.name
+            || (h.target === 'blue' ? 'Força Azul' : h.target === 'red' ? 'Força Vermelha' : h.target);
+          return `<div class="fac-cyber-hist">
+            <span class="fac-dim">T${h.turn}</span>
+            <span class="${tc}">${h.attacker === 'blue' ? 'Azul' : 'Vermelho'}</span>
+            ${escHtml(CYBER_EFFECTS[h.operation]?.name || h.operation)} → ${escHtml(targetLabel)}:
+            <b>${escHtml(RESULT_LABELS[h.facilitatorDecision] || h.facilitatorDecision)}</b>
+          </div>`;
+        }).join('');
+  }
+
+  facPopulateCyberEffectSelect();
+  facRefreshCyberEventTargets();
+}
+
+function facPopulateCyberEffectSelect() {
+  const sel = document.getElementById('fce-effect');
+  if (!sel || sel.options.length > 0) return;
+  sel.innerHTML = Object.values(CYBER_EFFECTS).map(e =>
+    `<option value="${e.id}">[N${e.level}] ${escHtml(e.name)}</option>`
+  ).join('');
+}
+
+function facRefreshCyberEventTargets() {
+  if (!gameState) return;
+  const teamSel   = document.getElementById('fce-team');
+  const effectSel = document.getElementById('fce-effect');
+  const targetSel = document.getElementById('fce-target');
+  if (!teamSel || !effectSel || !targetSel) return;
+
+  const attackerTeam = teamSel.value;
+  const enemyTeam    = attackerTeam === 'blue' ? 'red' : 'blue';
+  const effectDef    = CYBER_EFFECTS[effectSel.value];
+  if (!effectDef) { targetSel.innerHTML = ''; return; }
+
+  if (effectDef.targetType === 'team') {
+    targetSel.innerHTML = `<option value="${enemyTeam}">${enemyTeam === 'blue' ? 'Força Azul' : 'Força Vermelha'} (toda a força)</option>`;
+    targetSel.disabled = true;
+  } else {
+    targetSel.disabled = false;
+    let units = gameState.units.filter(u => u.team === enemyTeam && u.hp > 0);
+    if (effectDef.targetType === 'infrastructure') units = units.filter(u => INFRA_TYPES.includes(u.type));
+    targetSel.innerHTML = units.length === 0
+      ? '<option value="">— nenhum alvo disponível —</option>'
+      : units.map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('');
+  }
+}
+
+function facCreateCyberEvent() {
+  const attackerTeam = document.getElementById('fce-team').value;
+  const effectId     = document.getElementById('fce-effect').value;
+  const result       = document.getElementById('fce-result').value;
+  const secret       = document.getElementById('fce-secret').checked;
+  const messageText  = document.getElementById('fce-message').value.trim();
+  const messageTo    = document.getElementById('fce-msg-to').value;
+  const targetSel    = document.getElementById('fce-target');
+  const targetId     = targetSel.value;
+  const effectDef    = CYBER_EFFECTS[effectId];
+  if (!effectDef) return;
+  if (effectDef.targetType !== 'team' && !targetId) { showFacNotice('Selecione um alvo válido.'); return; }
+
+  socket.emit('cyber_create_event', {
+    attackerTeam, effectId, targetType: effectDef.targetType, targetId,
+    result, secret, messageText, messageTo,
+  });
+  document.getElementById('fce-message').value = '';
+  document.getElementById('fce-secret').checked = false;
+  showFacNotice('Evento cibernético criado.');
+}
+
 // ─── MENSAGENS ────────────────────────────────────────────────────────────────
 
 function facSendMessage() {
@@ -507,7 +681,7 @@ function facUpdatePhaseUI(phase) {
   const approvalPanel = document.getElementById('fac-approval-panel');
   // O painel de aprovação é exibido explicitamente pelos handlers de evento
   // Aqui apenas resetamos se a fase não é de aprovação
-  if (phase !== 'movement_approval' && phase !== 'combat_approval') {
+  if (phase !== 'movement_approval' && phase !== 'combat_approval' && phase !== 'cyber_approval') {
     if (approvalPanel) approvalPanel.classList.add('hidden');
   }
 }

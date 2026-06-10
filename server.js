@@ -7,6 +7,10 @@ const { ORDER_OF_BATTLE }  = require('./shared/order_of_battle');
 const { COMBAT_CONFIG }    = require('./shared/combat_config');
 const { resolveEngagement, getWeaponQuantity, getWeaponRange } = require('./shared/combat_engine');
 const {
+  CYBER_EFFECTS, CYBER_DEFENSE_EFFECTS, RESULT_LABELS,
+  buildStartingHand, scaleCyberEffect, computeCyberSuggestion,
+} = require('./shared/cyber_config');
+const {
   initializeFuel, isFuelDisabled,
   navalMoveCost, spendNavalFuel, spendAirFuel,
   spendEngagementFuel, spendDamageFuel,
@@ -111,8 +115,11 @@ function stateFor(state,role){
   const detected=enemies.filter(enemy=>{
     const stealthy=!!enemy.stealthy;
     const deepBonus=getTerrain(enemy.col,enemy.row)===T_DEEP?1:0;
+    const stealthBonus=activeCyberModifier(state,enemy.team,enemy.id,'stealthBonus');
     return mineForDetection.some(f=>{
       let range=stealthy?rangeAgainst(f.detectionRange,'submarine')-deepBonus:rangeAgainst(f.detectionRange,enemy.category);
+      range+=activeCyberModifier(state,f.team,f.id,'detectionRange');
+      range-=stealthBonus;
       if(night&&f.category!=='submarine') range-=stealthy?1:2;
       return range>=1&&hexDist(f.col,f.row,enemy.col,enemy.row)<=range;
     });
@@ -122,6 +129,7 @@ function stateFor(state,role){
   const detectedNeutrals=state.units.filter(u=>u.team==='neutral'&&u.hp>0).filter(neutral=>{
     return mineForDetection.some(f=>{
       let range=rangeAgainst(f.detectionRange,neutral.category);
+      range+=activeCyberModifier(state,f.team,f.id,'detectionRange');
       if(night&&f.category!=='submarine') range-=2;
       return range>=1&&hexDist(f.col,f.row,neutral.col,neutral.row)<=range;
     });
@@ -133,12 +141,19 @@ function stateFor(state,role){
     return{...n,detected:true};
   });
 
+  const fakeUnits=(state.cyber?.fakeContacts||[]).filter(fc=>fc.visibleToTeam===team).map(fc=>({
+    id:fc.id,team:fc.fakeTeam,name:'Contato Não Identificado',category:'surface',type:'fragata',
+    composition:[],movement:0,detectionRange:{},attackRange:{},weapons:{},capabilities:{},
+    col:fc.col,row:fc.row,hp:1,maxHp:1,detected:true,isFakeContact:true,
+  }));
+
   return{
     ...stateRest,
-    units:[...mine,...detected,...detectedNeutrals],
+    units:[...mine,...detected,...detectedNeutrals,...fakeUnits],
     blueAttacks:team==='blue'?state.blueAttacks:(state.blueAttacks!==null?'✓':null),
     redAttacks: team==='red' ?state.redAttacks :(state.redAttacks !==null?'✓':null),
     isFacilitator:false,
+    cyber:filterCyberForTeam(state,team),
     log:filterLogForPlayer(stateRest.log,team),
   };
 }
@@ -242,6 +257,168 @@ function checkSofBoarding(state){
   }
 }
 
+// ─── Guerra Cibernética ───────────────────────────────────────────────────────
+let _cyberSeed=1;
+function genCyberId(prefix){return `${prefix}-${_cyberSeed++}`;}
+
+// Soma os modificadores cibernéticos ativos de `key` afetando `team`/`unitId`.
+// Efeitos com scope 'team' aplicam-se a toda a equipe; scope 'unit' apenas à unidade-alvo.
+function activeCyberModifier(state,team,unitId,key){
+  let total=0;
+  for(const eff of state.cyber?.activeEffects||[]){
+    if(eff.affectedTeam!==team) continue;
+    if(eff.scope==='unit'&&eff.targetId!==unitId) continue;
+    total+=Number(eff.modifiers?.[key]||0);
+  }
+  return total;
+}
+
+function isInfraResupplyBlocked(state,infraUnit){
+  for(const eff of state.cyber?.activeEffects||[]){
+    if(eff.affectedTeam!==infraUnit.team) continue;
+    if(!eff.modifiers?.resupplyBlocked) continue;
+    if(eff.scope==='team') return true;
+    if(eff.scope==='unit'&&eff.targetId===infraUnit.id) return true;
+  }
+  return false;
+}
+
+function getCyberTeamsWithFlag(state,key){
+  const teams=new Set();
+  for(const eff of state.cyber?.activeEffects||[]){
+    if(eff.scope==='team'&&eff.modifiers?.[key]) teams.add(eff.affectedTeam);
+  }
+  return teams;
+}
+
+// Filtra o estado cibernético exposto a uma equipe: oculta a mão do
+// adversário, operações pendentes alheias e a origem de efeitos secretos.
+function filterCyberForTeam(state,team){
+  const enemyTeam=team==='blue'?'red':'blue';
+  const cyber=state.cyber||{};
+  const enemyHand=cyber[enemyTeam]||{offensiveCards:[],defensiveCards:[],submitted:false};
+  const filteredEnemyHand={
+    offensiveCount:enemyHand.offensiveCards.filter(c=>!c.used).length,
+    defensiveActiveCount:enemyHand.defensiveCards.filter(c=>c.active).length,
+    submitted:enemyHand.submitted,
+  };
+  const activeEffects=(cyber.activeEffects||[])
+    .filter(eff=>eff.affectedTeam===team||eff.attackerTeam===team)
+    .map(eff=>{
+      if(eff.affectedTeam===team&&eff.secret&&eff.attackerTeam!==team){
+        return{...eff,attackerTeam:null,effectId:null,name:'Anomalia Não Identificada'};
+      }
+      return eff;
+    });
+  const pendingOperations=(cyber.pendingOperations||[]).filter(op=>op.attackerTeam===team);
+  return{
+    [team]:cyber[team]||buildStartingHand(team),
+    [enemyTeam]:filteredEnemyHand,
+    pendingOperations,
+    activeEffects,
+  };
+}
+
+function describeCyberTarget(state,op){
+  if(op.targetType==='team') return op.defenderTeam==='blue'?'Força Azul':'Força Vermelha';
+  const u=state.units.find(x=>x.id===op.targetId);
+  return u?u.name:op.targetId;
+}
+
+function tickCyberEffects(state){
+  state.cyber.activeEffects=(state.cyber.activeEffects||[]).filter(eff=>{
+    eff.turnsRemaining-=1;
+    if(eff.turnsRemaining<=0){
+      state.log.unshift(`🛡 Efeito cibernético expirado: ${eff.name} (${eff.affectedTeam==='blue'?'Azul':'Vermelho'}).`);
+      return false;
+    }
+    return true;
+  });
+  state.cyber.fakeContacts=(state.cyber.fakeContacts||[]).filter(fc=>{
+    fc.turnsRemaining-=1;
+    return fc.turnsRemaining>0;
+  });
+  for(const team of['blue','red']){
+    state.cyber[team].submitted=false;
+    for(const card of state.cyber[team].defensiveCards) card.active=false;
+  }
+  state.cyber.pendingOperations=[];
+}
+
+// Aplica o efeito de uma operação cyber já decidida pelo Facilitador.
+// Retorna {effectAppliedDesc, message} — `message` é um objeto de mensagem
+// (estilo facilitator_message) quando o efeito é do tipo 'message'.
+function applyCyberEffect(state,op,result,extra={}){
+  const effectDef=CYBER_EFFECTS[op.effectId];
+  const scaled=scaleCyberEffect(effectDef,result);
+  const targetLabel=describeCyberTarget(state,op);
+  let effectAppliedDesc='Nenhum efeito.';
+  let message=null;
+
+  if(scaled){
+    if(effectDef.kind==='modifier'){
+      state.cyber.activeEffects.push({
+        id:genCyberId('CYBEFF'),effectId:op.effectId,name:effectDef.name,
+        attackerTeam:op.attackerTeam,affectedTeam:op.defenderTeam,
+        scope:effectDef.scope||'unit',
+        targetId:effectDef.scope==='team'?null:op.targetId,
+        modifiers:scaled.modifiers,turnsRemaining:scaled.duration,
+        secret:!!op.secret,
+      });
+      const modDesc=Object.entries(scaled.modifiers).map(([k,v])=>`${k}:${v>0?'+':''}${v}`).join(', ');
+      effectAppliedDesc=`${effectDef.name} aplicado a ${targetLabel} (${modDesc}) por ${scaled.duration} turno(s).`;
+    }else if(effectDef.kind==='fake_contact'){
+      const target=state.units.find(u=>u.id===op.targetId);
+      if(target){
+        const neighbors=hexNeighbors(target.col,target.row);
+        for(let i=0;i<scaled.fakeContactCount;i++){
+          const off=neighbors[i%Math.max(1,neighbors.length)]||{col:target.col,row:target.row};
+          state.cyber.fakeContacts.push({
+            id:genCyberId('FAKE'),visibleToTeam:op.defenderTeam,fakeTeam:op.attackerTeam,
+            col:off.col,row:off.row,turnsRemaining:scaled.duration,
+          });
+        }
+      }
+      effectAppliedDesc=`${scaled.fakeContactCount} contato(s) falso(s) criado(s) próximo a ${targetLabel}.`;
+    }else if(effectDef.kind==='message'){
+      const text=(extra.messageText||'').trim()||effectDef.description;
+      message={
+        id:`MSG-${Date.now()}`,from:'facilitator',to:op.defenderTeam,
+        text,timestamp:new Date().toISOString(),replies:[],cyberOp:true,
+      };
+      state.messages.push(message);
+      effectAppliedDesc=`Mensagem de inteligência enviada à ${targetLabel}.`;
+    }
+  }
+
+  const resultLabel=RESULT_LABELS[result]||result;
+  const fullEntry=`🛡 [CYBER N${effectDef.level}] ${op.attackerTeam==='blue'?'Azul':'Vermelho'} → ${effectDef.name} em ${targetLabel}: ${resultLabel}. ${effectAppliedDesc}`;
+  if(op.secret){
+    state.log.unshift(`[OCULTO:${op.attackerTeam}] ${fullEntry}`);
+    if(scaled){
+      state.log.unshift(`[OCULTO:${op.defenderTeam}] ⚠ Anomalia detectada em sistemas — possível ação cibernética não identificada.`);
+    }
+  }else{
+    state.log.unshift(fullEntry);
+  }
+  if(state.log.length>80) state.log=state.log.slice(0,80);
+
+  state.cyber.history.push({
+    turn:state.turn,attacker:op.attackerTeam,operation:op.effectId,
+    target:op.targetType==='team'?op.defenderTeam:op.targetId,
+    facilitatorDecision:result,effectApplied:effectAppliedDesc,
+    duration:scaled?scaled.duration:0,secret:!!op.secret,level:effectDef.level,
+  });
+
+  return{effectAppliedDesc,message};
+}
+
+function startMovementPhase(state){
+  state.phase='movement';
+  state.log.unshift('Fase de Movimentação iniciada.');
+  if(state.log.length>50) state.log=state.log.slice(0,50);
+}
+
 let _unitSeed=1000;
 function genUnitId(team){return `${team.toUpperCase()}-FAC-${_unitSeed++}`;}
 
@@ -256,11 +433,11 @@ function initialUnits(customOB){
 
 function newGame(customOB){
   const state={
-    turn:1,period:'day',phase:'movement',
+    turn:1,period:'day',phase:'cyber',
     blueDone:false,redDone:false,
     blueAttacks:null,redAttacks:null,
     units:initialUnits(customOB),
-    log:['──── Turno 1 · Período Diurno ────','Fase de Movimentação iniciada.'],
+    log:['──── Turno 1 · Período Diurno ────','Fase de Guerra Cibernética iniciada.'],
     messages:[],
     winner:null,
     movementSnapshot:{},
@@ -268,6 +445,14 @@ function newGame(customOB){
     pendingBrPayload:null,
     combatQueue:[],currentEngagementIndex:0,
     battleRoundDecisions:{blue:null,red:null},
+    cyber:{
+      blue:buildStartingHand('blue'),
+      red:buildStartingHand('red'),
+      pendingOperations:[],
+      activeEffects:[],
+      fakeContacts:[],
+      history:[],
+    },
   };
   saveMovementSnapshot(state);
   markRefuelEligibility(state);
@@ -285,6 +470,10 @@ function buildCombatQueue(state){
     const att=state.units.find(u=>u.id===atk.attackerId&&u.hp>0);
     const def=state.units.find(u=>u.id===atk.targetId&&u.hp>0);
     if(!att||!def) return null;
+    if(activeCyberModifier(state,att.team,att.id,'attackDisabled')>0){
+      state.log.unshift(`🛡 ${att.name}(${att.team}) impedido de atacar — efeito cibernético ativo.`);
+      return null;
+    }
     const dist=hexDist(att.col,att.row,def.col,def.row);
     let wpnType=null;
     if(atk.weaponType){
@@ -298,7 +487,9 @@ function buildCombatQueue(state){
     const profile=COMBAT_CONFIG.weaponProfiles?.[wpnType];
     const qty=getWeaponQuantity(att,wpnType);
     const requested=atk.amount??(SALVO_SIZE[wpnType]||1);
-    const amount=profile?.expendable?Math.min(qty,Math.max(1,requested)):1;
+    const baseAmount=profile?.expendable?Math.min(qty,Math.max(1,requested)):1;
+    const malus=activeCyberModifier(state,att.team,att.id,'attackAmountMalus');
+    const amount=Math.max(1,baseAmount-malus);
     return{id:`ENG-${String(i+1).padStart(2,'0')}`,attackerId:atk.attackerId,targetId:atk.targetId,
       weaponType:wpnType,amount,battleRound:1,maxBattleRounds:isSingleRoundWeapon(wpnType)?1:2,status:'pending',results:[]};
   }).filter(Boolean);
@@ -315,8 +506,9 @@ function resolveBattleRound(state,engagement,initiativeBonusTeam=null){
   const initLabel=initiativeBonusTeam?` ★${initiativeBonusTeam.toUpperCase()}`:'';
   state.log.unshift(`──── ${brTag}${initLabel} ────`);
   const dist=hexDist(att.col,att.row,def.col,def.row);
+  const defenderDisabled=isFuelDisabled(def)||activeCyberModifier(state,def.team,def.id,'ecmDegraded')>0;
   const eng=resolveEngagement({attacker:att,defender:def,weaponType:engagement.weaponType,
-    amount:engagement.amount,distance:dist,initiativeBonusTeam,defenderDisabled:isFuelDisabled(def)});
+    amount:engagement.amount,distance:dist,initiativeBonusTeam,defenderDisabled});
   if(!eng.ok){
     state.log.unshift(`⚠ ${att.name} → ${def.name}: ${eng.reason}`);
   }else{
@@ -433,7 +625,9 @@ function checkWinner(state){
 }
 
 function nextTurn(state){
-  const portHexes=new Set(state.units.filter(u=>u.team==='blue'&&u.hp>0&&u.type==='porto').map(u=>`${u.col},${u.row}`));
+  tickCyberEffects(state);
+  const fuelBlockedTeams=getCyberTeamsWithFlag(state,'fuelRecoveryBlocked');
+  const portHexes=new Set(state.units.filter(u=>u.team==='blue'&&u.hp>0&&u.type==='porto'&&!isInfraResupplyBlocked(state,u)).map(u=>`${u.col},${u.row}`));
   for(const u of state.units){
     if(u.hp<=0) continue;
     if(!u.initWeapons||Object.keys(u.initWeapons).length===0) continue;
@@ -445,6 +639,10 @@ function nextTurn(state){
       else if(!u.moved&&(u.category==='surface'||u.category==='submarine')) reload=portHexes.has(hexKey);
     }else if(u.team==='red'){
       if(u.category==='air') reload=u.fuel?.wasAtRefuelLocation===true;
+    }
+    if(reload&&u.category==='air'&&u.homeBaseId){
+      const base=state.units.find(b=>b.id===u.homeBaseId);
+      if(base&&isInfraResupplyBlocked(state,base)) reload=false;
     }
     if(reload){
       const restored=[];
@@ -464,19 +662,19 @@ function nextTurn(state){
       state.log.unshift(`⚫ ${u.name}(${u.team}) perdida — unidade transportadora afundada.`);
     }
   }
-  const fuelReports=recoverNavalFuel(state);
+  const fuelReports=recoverNavalFuel(state,fuelBlockedTeams);
   for(const{unit:u}of fuelReports) state.log.unshift(`⛽ ${u.name}(${u.team}) reabasteceu: ${u.fuel.current}/${u.fuel.max} FP.`);
-  recoverAircraft(state);
+  recoverAircraft(state,fuelBlockedTeams);
   state.units.forEach(u=>{u.moved=false;});
   resetFuelTurnCounters(state);
   state.period=state.period==='day'?'night':'day';
   if(state.period==='day') state.turn++;
-  state.phase='movement';
+  state.phase='cyber';
   state.blueDone=state.redDone=false;
   state.blueAttacks=state.redAttacks=null;
   const per=state.period==='day'?'Diurno':'Noturno';
   state.log.unshift(`──── Turno ${state.turn} · Período ${per} ────`);
-  state.log.unshift('Fase de Movimentação iniciada.');
+  state.log.unshift('Fase de Guerra Cibernética iniciada.');
   if(state.log.length>50) state.log=state.log.slice(0,50);
   saveMovementSnapshot(state);
   markRefuelEligibility(state);
@@ -578,6 +776,137 @@ io.on('connection',socket=>{
     socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
   });
 
+  // ── Guerra Cibernética: equipe envia operações ───────────────────────────
+  socket.on('cyber_submit',({operations,defenseCardIds})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state) return;
+    const{state}=room,{role}=socket.data;
+    const team=role;
+    if(!['blue','red'].includes(team)) return;
+    if(state.phase!=='cyber'){socket.emit('action_error','Não é a fase de Guerra Cibernética.');return;}
+    if(state.cyber[team].submitted){socket.emit('action_error','Você já concluiu a fase cibernética.');return;}
+
+    const enemyTeam=team==='blue'?'red':'blue';
+    const hand=state.cyber[team];
+
+    // Ativar cartas defensivas
+    for(const cardId of(defenseCardIds||[])){
+      const card=hand.defensiveCards.find(c=>c.id===cardId);
+      if(card) card.active=true;
+    }
+
+    for(const op of(operations||[])){
+      const card=hand.offensiveCards.find(c=>c.id===op.cardId&&!c.used&&c.effectId===op.effectId);
+      const effectDef=CYBER_EFFECTS[op.effectId];
+      if(!card||!effectDef) continue;
+
+      let targetId=op.targetId,defenderTeam=enemyTeam;
+      if(effectDef.targetType==='team'){
+        targetId=enemyTeam;
+      }else{
+        const target=state.units.find(u=>u.id===op.targetId&&u.hp>0&&u.team===enemyTeam);
+        if(!target) continue;
+        if(effectDef.targetType==='infrastructure'&&!['porto','aeroporto','carrier','fpso','base_naval','bateria_ada','bateria_costeira'].includes(target.type)) continue;
+        targetId=target.id;
+      }
+
+      card.used=true;
+      const{chance,result}=computeCyberSuggestion(state.cyber,team,defenderTeam,effectDef);
+      state.cyber.pendingOperations.push({
+        id:genCyberId('CYBOP'),attackerTeam:team,defenderTeam,effectId:op.effectId,
+        targetType:effectDef.targetType,targetId,cardId:card.id,
+        justification:(op.justification||'').slice(0,300),
+        secret:!!op.secret,suggestedChance:chance,suggestedResult:result,
+      });
+      state.log.unshift(`[OCULTO:${team}] 🛡 ${team==='blue'?'Azul':'Vermelho'} declarou operação cyber: ${effectDef.name} → ${describeCyberTarget(state,{targetType:effectDef.targetType,targetId,defenderTeam})}`);
+    }
+
+    hand.submitted=true;
+    state.log.unshift(`${team==='blue'?'Força Azul':'Força Vermelha'} concluiu a fase de Guerra Cibernética.`);
+    if(state.log.length>50) state.log=state.log.slice(0,50);
+
+    if(state.cyber.blue.submitted&&state.cyber.red.submitted){
+      if(state.cyber.pendingOperations.length===0){
+        startMovementPhase(state);
+      }else{
+        state.phase='cyber_approval';
+        state.log.unshift('Operações cibernéticas declaradas. Aguardando avaliação do Facilitador...');
+        if(room.players.facilitator) io.to(room.players.facilitator).emit('cyber_approval_needed',stateFor(state,'facilitator'));
+      }
+    }
+    broadcast(room);
+  });
+
+  // ── Guerra Cibernética: facilitador resolve uma operação ──────────────────
+  socket.on('cyber_resolve_op',({opId,result,messageText})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state||socket.data.role!=='facilitator') return;
+    const{state}=room;
+    if(state.phase!=='cyber_approval'){socket.emit('action_error','Não é a fase de aprovação cibernética.');return;}
+    const idx=state.cyber.pendingOperations.findIndex(o=>o.id===opId);
+    if(idx===-1) return;
+    const[op]=state.cyber.pendingOperations.splice(idx,1);
+    const finalResult=result||op.suggestedResult;
+    const{message}=applyCyberEffect(state,op,finalResult,{messageText});
+    if(message){
+      const sendTo=pid=>{if(pid) io.to(pid).emit('facilitator_message',message);};
+      sendTo(room.players[op.defenderTeam]);
+    }
+    if(state.cyber.pendingOperations.length===0&&state.phase==='cyber_approval'){
+      startMovementPhase(state);
+    }
+    broadcast(room);
+  });
+
+  // ── Guerra Cibernética: facilitador conclui a fase (resolve pendências automaticamente) ──
+  socket.on('cyber_finish_phase',()=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state||socket.data.role!=='facilitator') return;
+    const{state}=room;
+    if(state.phase!=='cyber_approval'){socket.emit('action_error','Não é a fase de aprovação cibernética.');return;}
+    for(const op of[...state.cyber.pendingOperations]){
+      const{message}=applyCyberEffect(state,op,op.suggestedResult);
+      if(message){
+        const sendTo=pid=>{if(pid) io.to(pid).emit('facilitator_message',message);};
+        sendTo(room.players[op.defenderTeam]);
+      }
+    }
+    state.cyber.pendingOperations=[];
+    startMovementPhase(state);
+    broadcast(room);
+  });
+
+  // ── Guerra Cibernética: facilitador cria evento manual ─────────────────────
+  socket.on('cyber_create_event',({attackerTeam,effectId,targetType,targetId,result,secret,messageText,messageTo})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state||socket.data.role!=='facilitator') return;
+    const{state}=room;
+    const effectDef=CYBER_EFFECTS[effectId];
+    if(!effectDef||!['blue','red'].includes(attackerTeam)) return;
+    const enemyTeam=attackerTeam==='blue'?'red':'blue';
+    let defenderTeam=enemyTeam,resolvedTargetId=targetId;
+    if(effectDef.targetType==='team'){
+      defenderTeam=targetId&&['blue','red'].includes(targetId)?targetId:enemyTeam;
+      resolvedTargetId=defenderTeam;
+    }else{
+      const target=state.units.find(u=>u.id===targetId&&u.hp>0);
+      if(!target) return;
+      defenderTeam=target.team;
+      resolvedTargetId=target.id;
+    }
+    const op={attackerTeam,defenderTeam,effectId,targetType:effectDef.targetType,targetId:resolvedTargetId,secret:!!secret};
+    const finalResult=result||'success';
+    const{message}=applyCyberEffect(state,op,finalResult,{messageText});
+    state.cyber.history[state.cyber.history.length-1].facilitatorDecision='manual:'+finalResult;
+    if(message){
+      const to=messageTo||defenderTeam;
+      const sendTo=pid=>{if(pid) io.to(pid).emit('facilitator_message',message);};
+      if(to==='all'||to==='blue') sendTo(room.players.blue);
+      if(to==='all'||to==='red') sendTo(room.players.red);
+    }
+    broadcast(room);
+  });
+
   // ── Movimentação ─────────────────────────────────────────────────────────
   socket.on('commit_moves',({moves})=>{
     const room=rooms.get(socket.data.roomId);
@@ -596,6 +925,7 @@ io.on('connection',socket=>{
       if(!unit){socket.emit('action_error',`Unidade ${unitId} inválida.`);return;}
       if(unit.movement===0){socket.emit('action_error',`${unit.name}: unidade fixa.`);return;}
       if(isFuelDisabled(unit)){socket.emit('action_error',`${unit.name}: sem combustível.`);return;}
+      if(activeCyberModifier(state,team,unit.id,'moveDisabled')>0){socket.emit('action_error',`${unit.name}: C2 interrompido — movimento bloqueado.`);return;}
       if(path[0].col!==unit.col||path[0].row!==unit.row){socket.emit('action_error',`Caminho inválido para ${unit.name}.`);return;}
       if(path.length-1>unit.movement){socket.emit('action_error',`${unit.name}: caminho excede alcance.`);return;}
       for(let i=1;i<path.length;i++){

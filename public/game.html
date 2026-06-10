@@ -262,6 +262,12 @@
         <div id="unit-panel"><p class="no-sel">Clique em uma unidade sua</p></div>
       </div>
 
+      <div class="panel cyber-panel hidden" id="cyber-panel">
+        <div class="panel-title">🛡 GUERRA CIBERNÉTICA</div>
+        <div id="cyber-status" class="cyber-status"></div>
+        <div id="cyber-content"></div>
+      </div>
+
       <div class="panel actions-panel">
         <div class="panel-title">AÇÕES</div>
         <button id="end-phase-btn"  class="act-btn yellow hidden">Encerrar Movimentação</button>
@@ -324,6 +330,41 @@
             </select>
           </div>
           <button class="act-btn gray fac-small-btn" style="width:100%" onclick="facAddNewUnit()">+ Adicionar ao Jogo</button>
+        </div>
+      </div>
+
+      <!-- Guerra Cibernética -->
+      <div class="panel fac-cyber-panel">
+        <div class="panel-title">🛡 GUERRA CIBERNÉTICA</div>
+
+        <div class="fac-cyber-sub">Efeitos Ativos</div>
+        <div id="fac-cyber-effects" class="fac-cyber-list"><p class="fac-dim">Nenhum efeito ativo.</p></div>
+
+        <div class="fac-cyber-sub">Histórico Cyber</div>
+        <div id="fac-cyber-history" class="fac-cyber-list"><p class="fac-dim">Sem registros.</p></div>
+
+        <div class="fac-cyber-sub">Criar Evento Cyber</div>
+        <div class="fac-cyber-create">
+          <select id="fce-team" class="fac-input fac-input-sm" onchange="facRefreshCyberEventTargets()">
+            <option value="blue">Origem: Equipe Azul</option>
+            <option value="red">Origem: Equipe Vermelha</option>
+          </select>
+          <select id="fce-effect" class="fac-input fac-input-sm" onchange="facRefreshCyberEventTargets()"></select>
+          <select id="fce-target" class="fac-input fac-input-sm"></select>
+          <select id="fce-result" class="fac-input fac-input-sm">
+            <option value="success">Sucesso</option>
+            <option value="partial">Sucesso Parcial</option>
+            <option value="critical">Sucesso Crítico</option>
+            <option value="fail">Falha</option>
+          </select>
+          <label class="fac-cyber-check"><input type="checkbox" id="fce-secret"> Operação Secreta</label>
+          <textarea id="fce-message" class="fac-input fac-input-sm" rows="2" placeholder="Mensagem (apenas p/ Campanha de Desinformação)..."></textarea>
+          <select id="fce-msg-to" class="fac-input fac-input-sm">
+            <option value="all">Mensagem para: Todos</option>
+            <option value="blue">Mensagem para: Azul</option>
+            <option value="red">Mensagem para: Vermelho</option>
+          </select>
+          <button class="act-btn blue fac-small-btn" style="width:100%" onclick="facCreateCyberEvent()">⚡ Criar Evento</button>
         </div>
       </div>
 
@@ -430,6 +471,7 @@
 <script src="js/terrain.js"></script>
 <script src="js/units.js"></script>
 <script src="js/export.js"></script>
+<script src="js/cyber_data.js"></script>
 <script src="js/facilitator.js"></script>
 <script src="js/client.js"></script>
 </body>

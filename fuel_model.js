@@ -162,10 +162,11 @@ function markRefuelEligibility(state) {
 // Called at the END of each turn (before the next turn begins).
 // A naval unit is refuelled if it was stacked with a provider at the
 // START of the turn AND is still stacked with one NOW.
-function recoverNavalFuel(state) {
+function recoverNavalFuel(state, blockedTeams = null) {
   const reports = [];
   for (const u of state.units) {
     if ((u.hp ?? 0) <= 0 || u.fuel?.fuelType !== 'naval') continue;
+    if (blockedTeams && blockedTeams.has(u.team)) continue;
     if (!u.fuel.wasStackedWithRefuelProvider) continue;
     if (!hasRefuelProvider(u, state.units)) continue;
     if ((u.fuel.current ?? 0) >= u.fuel.max) continue;
@@ -202,9 +203,10 @@ function checkAirFuelLosses(state) {
 // ─── Turn transition ──────────────────────────────────────────────────────────
 // Aircraft that ended their turn at a base → 'ready' (full fuel); called at turn start.
 // Weapon restoration is done in server.js nextTurn using the same flag.
-function recoverAircraft(state) {
+function recoverAircraft(state, blockedTeams = null) {
   for (const u of state.units) {
     if (u.category !== 'air' || !u.fuel?.wasAtRefuelLocation) continue;
+    if (blockedTeams && blockedTeams.has(u.team)) continue;
     u.airStatus               = 'ready';
     u.fuel.current            = u.fuel.max;
     u.fuel.wasAtRefuelLocation = false;
