@@ -12,6 +12,7 @@
   --red-l:   #ff8a80;
   --gold:    #c9a84c;
   --gold-l:  #ffd54f;
+  --cyber:   #ce93d8;
   --text:    #d6e8f7;
   --text-dim:#7aa5c5;
   --border:  rgba(100,160,210,0.2);
@@ -170,6 +171,8 @@ h2 {
   transition: border-color 0.3s;
 }
 .feature:hover { border-color: var(--gold); }
+.feature-cyber:hover { border-color: var(--cyber); }
+.feature-cyber .feat-icon { color: var(--cyber); }
 .feat-icon { font-size: 2rem; margin-bottom: 0.75rem; }
 .feature h3 { color: var(--gold-l); font-size: 0.95rem; letter-spacing: 2px; margin-bottom: 0.5rem; }
 .feature p  { color: var(--text-dim); font-size: 0.82rem; }
@@ -374,8 +377,9 @@ h2 {
 .join-teams-row { display: flex; gap: 0.75rem; }
 .join-teams-row .btn-action { flex: 1; }
 
-.step-fac  { border-color: var(--gold); color: var(--gold); font-size: 0.9rem; }
-.step-blue { border-color: var(--blue-l); color: var(--blue-l); }
+.step-fac   { border-color: var(--gold); color: var(--gold); font-size: 0.9rem; }
+.step-blue  { border-color: var(--blue-l); color: var(--blue-l); }
+.step-cyber { border-color: var(--cyber); color: var(--cyber); }
 input[type=text] {
   background: rgba(10,30,50,0.9);
   border: 1px solid var(--border);
