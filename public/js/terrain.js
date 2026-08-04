@@ -75,12 +75,9 @@ const INFRA = [
 ];
 
 // ─── Movement rules ───────────────────────────────────────────────────────────
-function canEnterTerrain(unitTypeOrCategory, terrain) {
-  if (unitTypeOrCategory === 'air' || unitTypeOrCategory === 'helicoptero' || unitTypeOrCategory === 'patrulha')
-    return true;
-  if (unitTypeOrCategory === 'land')
-    return terrain === T_LAND || terrain === T_SHALLOW;
-  if (unitTypeOrCategory === 'submarine' || unitTypeOrCategory === 'submarino')
-    return terrain !== T_LAND && terrain !== T_SHALLOW;
+function canEnterTerrain(category, terrain) {
+  if (category === 'air' || category === 'neutral_air') return true;
+  if (category === 'land')       return terrain === T_LAND || terrain === T_SHALLOW;
+  if (category === 'submarine')  return terrain !== T_LAND && terrain !== T_SHALLOW;
   return terrain !== T_LAND; // surface
 }
