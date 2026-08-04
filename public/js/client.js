@@ -659,14 +659,32 @@ document.addEventListener('click',   e => {
   if (d && !d.classList.contains('hidden') && !d.contains(e.target)) closeUnitDetail();
 });
 
-// ─── Touch: drag + pinch-to-zoom ─────────────────────────────────────────────
+// ─── Touch: drag + pinch-to-zoom + double-tap + long-press ───────────────────
+let _lastTapTime = 0, _lastTapXY = null, _longPressTimer = null;
+
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   if (e.touches.length === 1) {
     const t = e.touches[0];
     _dragOrigin = { clientX: t.clientX, clientY: t.clientY, panX, panY };
     _dragging = false; _pinch0 = null;
+
+    // Long-press (~500ms): abre detalhe de unidade, substituto do clique direito
+    if (_longPressTimer) clearTimeout(_longPressTimer);
+    _longPressTimer = setTimeout(() => {
+      _longPressTimer = null;
+      if (!gameState) return;
+      const r2 = canvas.getBoundingClientRect();
+      const cx2 = (t.clientX - r2.left) * (canvas.width / r2.width);
+      const cy2 = (t.clientY - r2.top)  * (canvas.height / r2.height);
+      const { col: lc, row: lr } = _worldHex(cx2, cy2);
+      const hits = gameState.units.filter(u => u.col === lc && u.row === lr && u.hp > 0);
+      if (hits.length) showUnitDetail(hits.find(u => u.id === selUnitId) || hits[0], t.clientX, t.clientY);
+      _dragging = true; // impede click após long-press
+    }, 500);
+
   } else if (e.touches.length === 2) {
+    if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
     _dragOrigin = null;
     const t0 = e.touches[0], t1 = e.touches[1];
     const r = canvas.getBoundingClientRect();
@@ -682,10 +700,17 @@ canvas.addEventListener('touchmove', e => {
   if (e.touches.length === 1 && _dragOrigin && !_pinch0) {
     const t = e.touches[0];
     const r = canvas.getBoundingClientRect();
-    const dx = (t.clientX - _dragOrigin.clientX) * (canvas.width/r.width);
-    const dy = (t.clientY - _dragOrigin.clientY) * (canvas.height/r.height);
-    if (!_dragging && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) _dragging = true;
-    if (_dragging) { panX = _dragOrigin.panX + dx; panY = _dragOrigin.panY + dy; clampPan(); render(); }
+    const dxCss = Math.abs(t.clientX - _dragOrigin.clientX);
+    const dyCss = Math.abs(t.clientY - _dragOrigin.clientY);
+    if (!_dragging && (dxCss > 8 || dyCss > 8)) {
+      _dragging = true;
+      if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+    }
+    if (_dragging) {
+      const dx = (t.clientX - _dragOrigin.clientX) * (canvas.width/r.width);
+      const dy = (t.clientY - _dragOrigin.clientY) * (canvas.height/r.height);
+      panX = _dragOrigin.panX + dx; panY = _dragOrigin.panY + dy; clampPan(); render();
+    }
   } else if (e.touches.length === 2 && _pinch0) {
     const t0 = e.touches[0], t1 = e.touches[1];
     const dist = Math.hypot(t1.clientX-t0.clientX, t1.clientY-t0.clientY);
@@ -698,14 +723,28 @@ canvas.addEventListener('touchmove', e => {
 
 canvas.addEventListener('touchend', e => {
   e.preventDefault();
+  if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
   if (e.touches.length < 2) _pinch0 = null;
   if (e.touches.length === 0) {
     if (!_dragging && _dragOrigin && gameState) {
       const t = e.changedTouches[0];
-      const {cx, cy} = { cx: (t.clientX - canvas.getBoundingClientRect().left) * (canvas.width / canvas.getBoundingClientRect().width),
-                         cy: (t.clientY - canvas.getBoundingClientRect().top)  * (canvas.height / canvas.getBoundingClientRect().height) };
-      const {col, row} = _worldHex(cx, cy);
-      handleClick(col, row);
+      const r = canvas.getBoundingClientRect();
+      const cx = (t.clientX - r.left) * (canvas.width / r.width);
+      const cy = (t.clientY - r.top)  * (canvas.height / r.height);
+      const { col, row } = _worldHex(cx, cy);
+
+      // Double-tap: alterna visão geral ↔ aproximação ancorada no ponto tocado
+      const now = Date.now();
+      const dt = now - _lastTapTime;
+      const dxy = _lastTapXY ? Math.hypot(t.clientX - _lastTapXY.x, t.clientY - _lastTapXY.y) : Infinity;
+      if (dt < 300 && dxy < 30) {
+        _lastTapTime = 0; _lastTapXY = null;
+        if (zoomLevel > Z_MIN + 0.1) resetZoom();
+        else zoomTo(2.0, cx, cy);
+      } else {
+        _lastTapTime = now; _lastTapXY = { x: t.clientX, y: t.clientY };
+        handleClick(col, row);
+      }
     }
     _dragOrigin = null; _dragging = false;
   }
