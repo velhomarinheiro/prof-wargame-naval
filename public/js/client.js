@@ -1110,6 +1110,17 @@ function updateUI() {
       ${wpnLines.length ? `<div class="u-hint" style="font-size:0.67rem;line-height:1.7">🚀 ${wpnLines.join(' · ')}</div>` : ''}
       ${capLines.length ? `<div class="u-hint" style="color:var(--text-dim);font-size:0.67rem;line-height:1.7">⚙ ${capLines.join(' · ')}</div>` : ''}
       ${comp ? `<div class="u-hint" style="color:var(--dim);font-size:0.67rem;line-height:1.5">${comp}</div>` : ''}
+      ${(() => {
+        const warns = [
+          clientCyberModifier(sel.id, sel.team, 'moveDisabled')         > 0 && '⚠ Movimento bloqueado (cyber)',
+          clientCyberModifier(sel.id, sel.team, 'attackDisabled')        > 0 && '⚠ Ataque bloqueado (cyber)',
+          clientCyberModifier(sel.id, sel.team, 'fuelRecoveryBlocked')   > 0 && '⚠ Recuperação de FP bloqueada (cyber)',
+          clientCyberModifier(sel.id, sel.team, 'ecmDegraded')           > 0 && '⚠ ECM degradado (cyber)',
+          clientCyberModifier(sel.id, sel.team, 'attackAmountMalus')     > 0 && '⚠ Targeting degradado (cyber)',
+          clientCyberModifier(sel.id, sel.team, 'stealthBonus')          > 0 && '✔ AIS corrompido (oculto do inimigo)',
+        ].filter(Boolean);
+        return warns.map(w => `<div class="u-hint" style="color:#ffb74d;font-size:0.67rem">${w}</div>`).join('');
+      })()}
       ${groupHint}${pathHint}
       ${atkHexes.length && myRole !== 'facilitator' ? '<div class="u-hint">Clique em alvos vermelhos p/ declarar ataque</div>' : ''}
       ${myAtks.length ? buildAtkListHtml(myAtks) : ''}
@@ -1123,6 +1134,37 @@ function updateUI() {
   }
 
   logEl.innerHTML = (log||[]).map(l=>`<p>${l}</p>`).join('');
+}
+
+// Soma modificadores cibernéticos ativos no cliente (espelha activeCyberModifier do servidor)
+function clientCyberModifier(unitId, team, key) {
+  let total = 0;
+  for (const eff of gameState?.cyber?.activeEffects || []) {
+    if (eff.affectedTeam !== team) continue;
+    if (!eff.modifiers?.[key]) continue;
+    if (eff.scope === 'unit' && eff.targetId !== unitId) continue;
+    total += Number(eff.modifiers[key]);
+  }
+  return total;
+}
+
+function activeCyberEffectsHtml(team) {
+  const effs = (gameState?.cyber?.activeEffects || []).filter(e => e.affectedTeam === team);
+  if (!effs.length) return '';
+  const fuelBlocked = effs.some(e => e.modifiers?.fuelRecoveryBlocked);
+  let html = '<div class="cyber-section-title" style="margin-top:6px;color:#ffb74d">⚠ Efeitos Ativos na Sua Força</div>';
+  if (fuelBlocked) html += '<div class="cyber-def-row" style="color:#ffb74d">⛽ Recuperação de combustível bloqueada</div>';
+  for (const eff of effs) {
+    const def = eff.effectId ? CYBER_EFFECTS[eff.effectId] : null;
+    const name = def?.name || eff.name || 'Anomalia Não Identificada';
+    const tgt = eff.scope === 'team' ? 'toda a força' : (() => {
+      const u = gameState?.units?.find(u => u.id === eff.targetId);
+      return u ? u.name : eff.targetId;
+    })();
+    const turns = eff.turnsRemaining > 0 ? `${eff.turnsRemaining}t` : 'último turno';
+    html += `<div class="cyber-def-row" style="color:#ce93d8;font-size:0.72rem">⚠ ${escHtml(name)} → ${escHtml(tgt)} (${turns})</div>`;
+  }
+  return html;
 }
 
 function fuelRow(unit) {
@@ -1762,13 +1804,15 @@ function renderCyberPanel() {
   }
 
   if (hand.submitted) {
-    statusEl.innerHTML = '✔ Operações cibernéticas declaradas. Aguardando o oponente / Facilitador...';
+    statusEl.innerHTML = '✔ Operações cibernéticas declaradas. Aguardando o oponente / Facilitador...' +
+      activeCyberEffectsHtml(myRole);
     contentEl.innerHTML = '';
     return;
   }
 
   const usedCount = hand.offensiveCards.filter(c => c.used || cyberQueue.some(op => op.cardId === c.id)).length;
-  statusEl.innerHTML = `Cartas ofensivas usadas: ${usedCount}/${hand.offensiveCards.length}`;
+  statusEl.innerHTML = `Cartas ofensivas usadas: ${usedCount}/${hand.offensiveCards.length}` +
+    activeCyberEffectsHtml(myRole);
 
   let html = '';
 
