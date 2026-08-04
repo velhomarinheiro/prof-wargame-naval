@@ -185,6 +185,10 @@ socket.on('game_start', ({ role, state }) => {
 });
 
 socket.on('game_update', state => {
+  // Qualquer atualização de estado significa que o jogo progrediu — limpa aviso de desconexão transitório
+  if (_graceInterval) { clearInterval(_graceInterval); _graceInterval = null; }
+  const notice = $('grace-notice'); if (notice) notice.classList.add('hidden');
+
   const prevTurn   = gameState?.turn;
   const prevPhase  = gameState?.phase;
   const prevMyDone = myRole && gameState && myRole !== 'facilitator'
@@ -313,8 +317,35 @@ socket.on('game_over', ({ winner, state }) => {
   gameOver.classList.remove('hidden');
 });
 
-socket.on('player_disconnected', ({ role }) => {
-  flashError(`${role === 'blue' ? 'Azul' : role === 'red' ? 'Vermelho' : 'Facilitador'} desconectou.`);
+let _graceInterval = null;
+socket.on('player_disconnected', ({ role, graceSeconds }) => {
+  const label = role === 'blue' ? 'Azul' : role === 'red' ? 'Vermelho' : 'Facilitador';
+  const notice = $('grace-notice');
+  if (!notice) { flashError(`${label} desconectou.`); return; }
+
+  if (_graceInterval) clearInterval(_graceInterval);
+  let remaining = graceSeconds || 75;
+  const update = () => {
+    notice.textContent = `⚠ ${label} desconectou — aguardando reconexão (${remaining}s)`;
+    notice.classList.remove('hidden');
+    if (remaining <= 0) { clearInterval(_graceInterval); _graceInterval = null; }
+    remaining--;
+  };
+  update();
+  _graceInterval = setInterval(update, 1000);
+});
+socket.on('player_reconnected', ({ role }) => {
+  if (_graceInterval) { clearInterval(_graceInterval); _graceInterval = null; }
+  const notice = $('grace-notice');
+  if (notice) notice.classList.add('hidden');
+  const label = role === 'blue' ? 'Azul' : role === 'red' ? 'Vermelho' : 'Facilitador';
+  flashError(`${label} reconectou.`);
+});
+socket.on('player_timeout', ({ role, msg }) => {
+  if (_graceInterval) { clearInterval(_graceInterval); _graceInterval = null; }
+  const notice = $('grace-notice');
+  if (notice) notice.classList.add('hidden');
+  flashError(msg || `${role} atingiu o tempo limite.`);
 });
 socket.on('opponent_disconnected', () => disconnected.classList.remove('hidden'));
 

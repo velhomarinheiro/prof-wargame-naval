@@ -792,6 +792,16 @@ textarea.fac-input { resize: vertical; min-height: 36px; }
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+/* ─── Grace-period notice (desconexão transitória) ───────────────────────── */
+.grace-notice {
+  padding: 3px 14px;
+  background: rgba(80,30,0,0.92);
+  color: #ffb74d;
+  font-size: 0.68rem; letter-spacing: 1px;
+  border: 1px solid #ffb74d;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
 /* ─── Fac header export buttons ──────────────────────────────────────────── */
 .fac-header-btns { display: flex; gap: 6px; margin-left: auto; }
 

@@ -19,9 +19,10 @@ const {
   recoverAircraft, resetFuelTurnCounters,
 } = require('./fuel_model');
 
-const PORT   = process.env.PORT || 3000;
-const GRID_W = 16;
-const GRID_H = 10;
+const PORT     = process.env.PORT || 3000;
+const GRID_W   = 16;
+const GRID_H   = 10;
+const GRACE_MS = Number(process.env.GRACE_MS) || 75_000;
 
 // ─── Terrain ─────────────────────────────────────────────────────────────────
 const T_LAND=0,T_SHALLOW=1,T_SHELF=2,T_DEEP=3,T_OIL=4;
@@ -710,6 +711,96 @@ function facBroadcast(room){
   io.to(room.players.facilitator).emit('game_update',stateFor(room.state,'facilitator'));
 }
 
+// ─── Auto-submit para equipe desconectada (usado pelo timer de graça) ─────────
+function autoSubmitForTeam(room, roomId, role) {
+  const { state } = room;
+  if (!state) return;
+  const notify = msg => {
+    ['blue','red','facilitator'].forEach(r => {
+      const pid = room.players[r];
+      if (pid) io.to(pid).emit('player_timeout', { role, msg });
+    });
+  };
+  const label = role === 'blue' ? 'Força Azul' : 'Força Vermelha';
+
+  if (state.phase === 'cyber') {
+    const hand = state.cyber?.[role];
+    if (hand && !hand.submitted) {
+      hand.submitted = true;
+      state.log.unshift(`${label} desconectou — operações cibernéticas submetidas automaticamente.`);
+      if (state.cyber.blue.submitted && state.cyber.red.submitted) {
+        if (state.cyber.pendingOperations.length === 0) {
+          startMovementPhase(state);
+        } else {
+          state.phase = 'cyber_approval';
+          state.log.unshift('Operações cibernéticas declaradas. Aguardando avaliação do Facilitador...');
+          if (room.players.facilitator) io.to(room.players.facilitator).emit('cyber_approval_needed', stateFor(state,'facilitator'));
+        }
+      }
+      broadcast(room);
+      notify(`${label} atingiu o tempo limite — fase cyber concluída automaticamente.`);
+    }
+    return;
+  }
+
+  if (state.phase === 'movement') {
+    const doneKey = role === 'blue' ? 'blueDone' : 'redDone';
+    if (!state[doneKey]) {
+      state[doneKey] = true;
+      state.log.unshift(`${label} desconectou — movimentos confirmados automaticamente (sem movimentos).`);
+      if (state.blueDone && state.redDone) {
+        checkSofBoarding(state);
+        const navalEmpty = checkNavalFuelZero(state);
+        for (const u of navalEmpty) {
+          const pid = room.players[u.team];
+          if (pid) io.to(pid).emit('fuel_alert', {unitId:u.id,name:u.name,type:'naval_empty'});
+          state.log.unshift(`⛽ ${u.name}(${u.team}) sem combustível.`);
+        }
+        const airLost = checkAirFuelLosses(state);
+        for (const u of airLost) {
+          const pid = room.players[u.team];
+          if (pid) io.to(pid).emit('fuel_alert', {unitId:u.id,name:u.name,type:'air_lost'});
+          state.log.unshift(`✈ ${u.name}(${u.team}) perdida por falta de combustível.`);
+        }
+        state.phase = 'movement_approval';
+        state.log.unshift('Movimentos concluídos. Aguardando aprovação do Facilitador...');
+        if (room.players.facilitator) io.to(room.players.facilitator).emit('movement_approval_needed', stateFor(state,'facilitator'));
+      }
+      broadcast(room);
+      notify(`${label} atingiu o tempo limite — movimentação encerrada automaticamente.`);
+    }
+    return;
+  }
+
+  if (state.phase === 'combat') {
+    const atkKey = role === 'blue' ? 'blueAttacks' : 'redAttacks';
+    if (state[atkKey] === null) {
+      state[atkKey] = [];
+      state.log.unshift(`${label} desconectou — ataques declarados automaticamente (nenhum ataque).`);
+      if (state.blueAttacks !== null && state.redAttacks !== null) {
+        state.log.unshift('── Resolução de Combate ──');
+        state.combatQueue = buildCombatQueue(state);
+        state.currentEngagementIndex = 0;
+        state.battleRoundDecisions = {blue:null,red:null};
+        broadcast(room);
+        if (state.combatQueue.length === 0) finishCombatPhase(room);
+        else startCurrentEngagement(room);
+        notify(`${label} atingiu o tempo limite — combate iniciado sem ataques do lado desconectado.`);
+        return;
+      }
+      broadcast(room);
+      notify(`${label} atingiu o tempo limite — ataques declarados automaticamente.`);
+    } else if (state.battleRoundDecisions && state.battleRoundDecisions[role] === null) {
+      state.battleRoundDecisions[role] = 'stop';
+      state.log.unshift(`${label} desconectou — decisão de round declarada automaticamente (recuar).`);
+      const { blue, red } = state.battleRoundDecisions;
+      if (blue && red) processBattleRoundDecision(room);
+      else broadcast(room);
+      notify(`${label} atingiu o tempo limite — decisão de round automática: recuar.`);
+    }
+  }
+}
+
 // ─── Socket connections ───────────────────────────────────────────────────────
 io.on('connection',socket=>{
   console.log('+ connect',socket.id);
@@ -736,10 +827,21 @@ io.on('connection',socket=>{
     if(!team||!['blue','red'].includes(team)){socket.emit('join_error','Selecione Azul ou Vermelho.');return;}
     if(room.players[team]){socket.emit('join_error',`Equipe ${team==='blue'?'Azul':'Vermelha'} já ocupada.`);return;}
 
+    const wasReconnect = !room.players[team]; // slot estava vazio = pode ser reconexão
     room.players[team]=socket.id;
     socket.data.roomId=room.id; socket.data.role=team;
     socket.join(room.id);
     socket.emit('join_success',{role:team,roomId:room.id});
+
+    // Cancela timer de graça ao reconectar
+    if(wasReconnect&&room.graceTimers?.[team]){
+      clearTimeout(room.graceTimers[team]);
+      delete room.graceTimers[team];
+      const notifyRecon=pid=>{if(pid) io.to(pid).emit('player_reconnected',{role:team});};
+      notifyRecon(room.players.facilitator);
+      notifyRecon(room.players[team==='blue'?'red':'blue']);
+      console.log(`~ reconnect ${team} to ${room.id}`);
+    }
 
     // Notifica facilitador
     if(room.players.facilitator){
@@ -1217,12 +1319,27 @@ io.on('connection',socket=>{
     const room=rooms.get(roomId);if(!room) return;
     console.log(`- disconnect ${role} from ${roomId}`);
     room.players[role]=null;
-    // Notify remaining players
-    const notify=pid=>{if(pid) io.to(pid).emit('player_disconnected',{role});};
+
+    // Período de graça: notifica os outros com contagem regressiva
+    if(!room.graceTimers) room.graceTimers={};
+    if(room.graceTimers[role]) clearTimeout(room.graceTimers[role]);
+
+    const graceSeconds=Math.round(GRACE_MS/1000);
+    const notify=pid=>{if(pid) io.to(pid).emit('player_disconnected',{role,graceSeconds});};
     if(role==='facilitator'){notify(room.players.blue);notify(room.players.red);}
     else{notify(room.players.facilitator);notify(room.players[role==='blue'?'red':'blue']);}
-    // Limpar sala se facilitador saiu
-    if(role==='facilitator') rooms.delete(roomId);
+
+    room.graceTimers[role]=setTimeout(()=>{
+      const r=rooms.get(roomId);
+      if(!r||r.players[role]) return; // reconectou ou sala foi destruída
+      if(role==='facilitator'){
+        // Facilitador não voltou — encerra a sala
+        rooms.delete(roomId);
+        ['blue','red'].forEach(t=>{const pid=r.players[t];if(pid) io.to(pid).emit('game_over',{winner:null,reason:'facilitator_timeout'});});
+      }else{
+        autoSubmitForTeam(r,roomId,role);
+      }
+    },GRACE_MS);
   });
 });
 
