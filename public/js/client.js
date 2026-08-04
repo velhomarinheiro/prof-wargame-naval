@@ -1037,12 +1037,17 @@ function updateUI() {
   }
   if (combatBtn) combatBtn.textContent = `Confirmar Ataques (${pendingAtks.length})`;
 
-  // Mensagem de espera para jogadores em fases de aprovação
+  // Mensagem de espera: fases de aprovação e combate já declarado
+  const myAtksState = myRole === 'blue' ? gameState.blueAttacks : gameState.redAttacks;
+  const hasDeclared = phase === 'combat' && myAtksState !== null && myAtksState !== undefined;
   const waitBanner = $('waiting-approval-banner');
   if (waitBanner) {
-    waitBanner.classList.toggle('hidden', !isApprovalPhase || myRole === 'facilitator');
-    if (isApprovalPhase) {
-      waitBanner.textContent = phase === 'movement_approval'
+    const showWait = (isApprovalPhase || hasDeclared) && myRole !== 'facilitator';
+    waitBanner.classList.toggle('hidden', !showWait);
+    if (showWait) {
+      waitBanner.textContent = hasDeclared && !isApprovalPhase
+        ? '⌛ Ataques declarados — aguardando adversário...'
+        : phase === 'movement_approval'
         ? '⌛ Aguardando aprovação do Facilitador (movimentos)...'
         : phase === 'cyber_approval'
         ? '⌛ Aguardando avaliação do Facilitador (guerra cibernética)...'
