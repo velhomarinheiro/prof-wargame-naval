@@ -86,7 +86,7 @@ const CYBER_EFFECTS = {
     id: 'interferencia_logistica', name: 'Interferência Logística', level: 2, category: 'logistica',
     targetType: 'team', baseChance: 55, duration: 2, scope: 'team',
     description: 'Interrompe a rede logística da força-alvo: nenhum reabastecimento permitido.',
-    kind: 'modifier', modifiers: { resupplyBlocked: 1 },
+    kind: 'modifier', modifiers: { resupplyBlocked: 1, fuelRecoveryBlocked: 1 },
   },
   ataque_porto: {
     id: 'ataque_porto', name: 'Ataque a Porto/Base', level: 2, category: 'logistica',
