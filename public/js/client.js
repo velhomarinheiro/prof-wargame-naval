@@ -222,7 +222,7 @@ socket.on('game_update', state => {
 
   if (shouldReset) {
     activePath = []; plannedMoves.clear(); selGroupIds = [];
-    selUnitId = null; moveHexes = []; atkHexes = [];
+    selUnitId = null; moveHexes = []; atkHexes = []; pendingAtks = [];
     hideStackPicker(); closeBrPanel();
   } else if (selUnitId) {
     const u = gameState.units.find(u => u.id === selUnitId && u.hp > 0);
